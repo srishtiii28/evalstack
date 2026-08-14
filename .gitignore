@@ -2,7 +2,8 @@
 .evalforge/
 
 # Generated datasets are reproducible from `evalforge dataset build --seed N`.
-datasets/
+# Anchored to the repo root so it never swallows src/evalforge/datasets/.
+/datasets/
 
 # Python
 .venv/

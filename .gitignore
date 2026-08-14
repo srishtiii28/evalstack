@@ -1,0 +1,25 @@
+# Evaluation state: run database and captured trajectories.
+.evalforge/
+
+# Generated datasets are reproducible from `evalforge dataset build --seed N`.
+datasets/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

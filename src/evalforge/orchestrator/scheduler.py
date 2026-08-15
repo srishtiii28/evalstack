@@ -30,6 +30,15 @@ class InfrastructureError(Exception):
     """A harness-level fault worth retrying — never an agent's failure to solve."""
 
 
+class FatalInfrastructureError(InfrastructureError):
+    """An infrastructure fault that retrying cannot fix.
+
+    A missing API key or an unknown model id fails identically every time.
+    Retrying it burns the provider's rate-limit allowance to reach the same
+    answer more slowly, so these are recorded on the first attempt.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class Job:
     """One attempt at one case."""
@@ -174,6 +183,9 @@ class Scheduler:
                     error=f"job exceeded {self._job_timeout_s:g}s",
                     duration_s=time.monotonic() - started,
                 )
+            except FatalInfrastructureError as exc:
+                last_error = exc
+                break
             except InfrastructureError as exc:
                 last_error = exc
                 if attempt_index + 1 < self._retry.max_attempts:

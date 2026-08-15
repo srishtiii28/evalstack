@@ -109,6 +109,11 @@ class LocalBackend:
                     await agent.run(context)
                 except asyncio.CancelledError:
                     raise
+                except InfrastructureError:
+                    # The provider broke, not the agent. Recording this as an
+                    # agent failure would turn an outage into a capability
+                    # regression, so it propagates to the scheduler instead.
+                    raise
                 except Exception as exc:
                     # Deliberately broad: an agent that crashes has failed the
                     # task, which is a measurement. Letting it propagate would

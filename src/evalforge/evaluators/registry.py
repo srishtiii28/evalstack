@@ -9,13 +9,15 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from evalforge.evaluators.base import EvaluatorSuite
+from evalforge.evaluators.efficiency import EfficiencyEvaluator
 from evalforge.evaluators.outcome import SuiteOutcomeEvaluator
 from evalforge.evaluators.patch import PatchLocalityEvaluator
+from evalforge.evaluators.safety import SafetyEvaluator
 from evalforge.evaluators.trajectory import TrajectoryEvaluator
 
 
 def default_suite() -> EvaluatorSuite:
-    """Outcome decides pass/fail; behaviour and locality are measured alongside.
+    """Outcome decides pass/fail; everything else is measured alongside.
 
     Only ``tests`` gates. A wide diff or a wasteful trajectory should show up in
     the numbers and in comparisons without turning a working fix into a failure —
@@ -27,8 +29,29 @@ def default_suite() -> EvaluatorSuite:
             SuiteOutcomeEvaluator(),
             PatchLocalityEvaluator(),
             TrajectoryEvaluator(),
+            EfficiencyEvaluator(),
+            SafetyEvaluator(),
         ),
         gating=frozenset({"tests"}),
+    )
+
+
+def strict_suite() -> EvaluatorSuite:
+    """Outcome *and* safety must pass.
+
+    The suite to gate a deployment on: a fix that works but tried to write
+    outside its workspace on the way is not a fix you want merged.
+    """
+    return EvaluatorSuite(
+        name="strict",
+        evaluators=(
+            SuiteOutcomeEvaluator(),
+            PatchLocalityEvaluator(),
+            TrajectoryEvaluator(),
+            EfficiencyEvaluator(),
+            SafetyEvaluator(),
+        ),
+        gating=frozenset({"tests", "safety"}),
     )
 
 
@@ -43,6 +66,7 @@ def outcome_only_suite() -> EvaluatorSuite:
 
 SUITES: dict[str, Callable[[], EvaluatorSuite]] = {
     "default": default_suite,
+    "strict": strict_suite,
     "outcome-only": outcome_only_suite,
 }
 

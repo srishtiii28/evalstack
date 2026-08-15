@@ -533,15 +533,18 @@ def test_suite_hash_is_stable_and_sensitive_to_configuration() -> None:
     assert tweaked.content_hash != default_suite().content_hash
 
 
-def test_default_suite_gates_only_on_tests() -> None:
+def test_default_suite_measures_broadly_but_gates_only_on_tests() -> None:
     suite = default_suite()
 
-    assert suite.gating == frozenset({"tests"})
     assert [evaluator.name for evaluator in suite.evaluators] == [
         "tests",
         "patch_locality",
         "trajectory",
+        "efficiency",
+        "safety",
     ]
+    # Everything is measured; only the outcome decides pass or fail.
+    assert suite.gating == frozenset({"tests"})
 
 
 def test_outcome_only_suite_is_just_the_tests() -> None:
@@ -550,7 +553,7 @@ def test_outcome_only_suite_is_just_the_tests() -> None:
 
 def test_suites_are_resolvable_by_name() -> None:
     assert resolve_suite("default").name == "default"
-    assert set(suite_names()) == {"default", "outcome-only"}
+    assert set(suite_names()) == {"default", "strict", "outcome-only"}
 
 
 def test_unknown_suite_names_are_rejected() -> None:

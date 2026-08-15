@@ -48,7 +48,9 @@ class PatchLocalityEvaluator(Evaluator):
         return self._weights.describe()
 
     async def evaluate(self, context: EvaluationContext) -> EvaluatorResult:
-        diff = context.workspace.diff()
+        # The diff frozen when the agent stopped — not recomputed here, which
+        # would also capture whatever the outcome evaluator's test run created.
+        diff = context.diff
         targets = set(context.case.metadata.target_files)
         touched = set(diff.touched)
 

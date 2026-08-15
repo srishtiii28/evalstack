@@ -19,6 +19,7 @@ from pathlib import Path
 from evalforge.agent.base import Agent, AgentContext
 from evalforge.env.workspace import ResourceLimits, Violation, workspace_for
 from evalforge.evaluators.base import EvaluationContext, EvaluatorSuite
+from evalforge.hashing import short, text_hash
 from evalforge.orchestrator.scheduler import InfrastructureError, Job
 from evalforge.schema.result import CaseResult
 from evalforge.schema.trajectory import Trajectory
@@ -30,9 +31,18 @@ _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _safe_filename(value: str) -> str:
-    """Make an identifier safe to use as a path component."""
+    """Make an identifier safe to use as a path component.
+
+    Sanitising is lossy — ``a/b`` and ``a_b`` both reduce to ``a_b`` — so any
+    name that had to be rewritten carries a hash of the original. Two cases
+    would otherwise silently overwrite each other's trajectory.
+    """
     cleaned = _UNSAFE_FILENAME_CHARS.sub("_", value).strip("._")
-    return cleaned or "unnamed"
+    if not cleaned:
+        return f"unnamed-{short(text_hash(value), 8)}"
+    if cleaned != value:
+        return f"{cleaned}-{short(text_hash(value), 8)}"
+    return cleaned
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +116,12 @@ class LocalBackend:
                     recorder.agent_error(error_type=type(exc).__name__, message=str(exc))
 
                 evaluation_context = EvaluationContext(
-                    case=case, workspace=workspace, trajectory=recorder.build()
+                    case=case,
+                    workspace=workspace,
+                    trajectory=recorder.build(),
+                    # Frozen here, before any evaluator runs a command that
+                    # could leave files behind and inflate the patch diff.
+                    diff=workspace.diff(),
                 )
                 try:
                     evaluator_results = await asyncio.wait_for(
@@ -116,6 +131,15 @@ class LocalBackend:
                 except TimeoutError as exc:
                     raise InfrastructureError(
                         f"evaluation exceeded {self._config.evaluation_timeout_s:g}s"
+                    ) from exc
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # A broken evaluator is a harness fault, not a verdict on the
+                    # agent. Surfacing it as one keeps a single bad case from
+                    # taking down every other result in the run.
+                    raise InfrastructureError(
+                        f"evaluator raised {type(exc).__name__}: {exc}"
                     ) from exc
         except OSError as exc:
             raise InfrastructureError(f"workspace failure: {exc}") from exc

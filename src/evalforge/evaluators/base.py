@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from pydantic import JsonValue
 
-from evalforge.env.workspace import Workspace
+from evalforge.env.workspace import FileDiff, Workspace
 from evalforge.hashing import content_hash
 from evalforge.schema.case import EvalCase
 from evalforge.schema.result import EvaluatorResult
@@ -17,11 +17,22 @@ from evalforge.schema.trajectory import Trajectory
 
 @dataclass(frozen=True, slots=True)
 class EvaluationContext:
-    """What an evaluator gets to look at: the task, the trace, and the aftermath."""
+    """What an evaluator gets to look at: the task, the trace, and the aftermath.
+
+    ``diff`` is captured the moment the agent stops, *before* any evaluator
+    runs. Evaluators execute commands in the workspace — running the test suite
+    is the whole point of the outcome evaluator — and anything those commands
+    leave behind would otherwise be indistinguishable from an agent's edit.
+    Freezing the diff at handoff removes that ordering hazard entirely.
+
+    It is required rather than defaulted: an empty default would let a caller
+    who forgets it get a confident "no files were modified" instead of an error.
+    """
 
     case: EvalCase
     workspace: Workspace
     trajectory: Trajectory
+    diff: FileDiff
 
 
 class Evaluator(ABC):

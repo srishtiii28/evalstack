@@ -86,7 +86,12 @@ async def test_outcome_passes_when_the_suite_is_green(tmp_path: Path) -> None:
     case = make_case()
     with workspace_for(case, base_dir=tmp_path) as workspace:
         result = await SuiteOutcomeEvaluator().evaluate(
-            EvaluationContext(case=case, workspace=workspace, trajectory=empty_trajectory())
+            EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=empty_trajectory(),
+                diff=workspace.diff(),
+            )
         )
 
     assert result.passed is True
@@ -98,7 +103,12 @@ async def test_outcome_fails_when_the_suite_is_red(tmp_path: Path) -> None:
     case = make_case(test_command=FAILING_COMMAND)
     with workspace_for(case, base_dir=tmp_path) as workspace:
         result = await SuiteOutcomeEvaluator().evaluate(
-            EvaluationContext(case=case, workspace=workspace, trajectory=empty_trajectory())
+            EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=empty_trajectory(),
+                diff=workspace.diff(),
+            )
         )
 
     assert result.passed is False
@@ -113,11 +123,21 @@ async def test_outcome_measures_the_final_state_not_what_the_agent_saw(tmp_path:
     with workspace_for(case, base_dir=tmp_path) as workspace:
         workspace.write_file("flag", "ok\n")
         green = await SuiteOutcomeEvaluator().evaluate(
-            EvaluationContext(case=case, workspace=workspace, trajectory=empty_trajectory())
+            EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=empty_trajectory(),
+                diff=workspace.diff(),
+            )
         )
         workspace.write_file("flag", "broken\n")
         after = await SuiteOutcomeEvaluator().evaluate(
-            EvaluationContext(case=case, workspace=workspace, trajectory=empty_trajectory())
+            EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=empty_trajectory(),
+                diff=workspace.diff(),
+            )
         )
 
     assert green.passed is True
@@ -129,7 +149,12 @@ async def test_outcome_measures_the_final_state_not_what_the_agent_saw(tmp_path:
 
 async def evaluate_patch(workspace, case, weights: PatchWeights | None = None) -> EvaluatorResult:
     return await PatchLocalityEvaluator(weights).evaluate(
-        EvaluationContext(case=case, workspace=workspace, trajectory=empty_trajectory())
+        EvaluationContext(
+            case=case,
+            workspace=workspace,
+            trajectory=empty_trajectory(),
+            diff=workspace.diff(),
+        )
     )
 
 
@@ -342,7 +367,12 @@ async def test_trajectory_evaluator_reports_signals_in_detail(tmp_path: Path) ->
 
     with workspace_for(case, base_dir=tmp_path) as workspace:
         result = await TrajectoryEvaluator().evaluate(
-            EvaluationContext(case=case, workspace=workspace, trajectory=build_trajectory(script))
+            EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=build_trajectory(script),
+                diff=workspace.diff(),
+            )
         )
 
     assert result.detail["redundant_reads"] == 1
@@ -360,7 +390,12 @@ async def test_trajectory_fails_below_the_configured_threshold(tmp_path: Path) -
 
     with workspace_for(case, base_dir=tmp_path) as workspace:
         result = await TrajectoryEvaluator(weights).evaluate(
-            EvaluationContext(case=case, workspace=workspace, trajectory=build_trajectory(script))
+            EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=build_trajectory(script),
+                diff=workspace.diff(),
+            )
         )
 
     assert result.score == pytest.approx(0.5)
@@ -446,7 +481,12 @@ async def test_suite_runs_every_evaluator_in_order(tmp_path: Path) -> None:
 
     with workspace_for(case, base_dir=tmp_path) as workspace:
         results = await suite.evaluate(
-            EvaluationContext(case=case, workspace=workspace, trajectory=empty_trajectory())
+            EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=empty_trajectory(),
+                diff=workspace.diff(),
+            )
         )
 
     assert [result.name for result in results] == ["first", "second"]
@@ -466,7 +506,12 @@ async def test_suite_evaluation_honours_a_deadline(tmp_path: Path) -> None:
     suite = EvaluatorSuite(name="slow", evaluators=(SlowEvaluator(),), gating=frozenset({"slow"}))
 
     with workspace_for(case, base_dir=tmp_path) as workspace:
-        context = EvaluationContext(case=case, workspace=workspace, trajectory=empty_trajectory())
+        context = EvaluationContext(
+                case=case,
+                workspace=workspace,
+                trajectory=empty_trajectory(),
+                diff=workspace.diff(),
+            )
         with pytest.raises(TimeoutError):
             await evaluate_with_timeout(suite, context, timeout_s=0.05)
 

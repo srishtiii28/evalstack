@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import JsonValue
+
 from evalforge.env.workspace import PathEscapeError, Workspace
+from evalforge.model.base import ToolSpec
 from evalforge.schema.case import EvalCase
 from evalforge.trace import TrajectoryRecorder
 
@@ -24,6 +27,80 @@ from evalforge.trace import TrajectoryRecorder
 TOOL_NAMES: tuple[str, ...] = ("list_files", "read_file", "write_file", "run_tests", "submit")
 
 MAX_LISTED_FILES = 200
+
+_NO_ARGUMENTS: dict[str, JsonValue] = {"type": "object", "properties": {}, "required": []}
+
+
+def tool_specs() -> tuple[ToolSpec, ...]:
+    """The tool surface as described to a model.
+
+    Lives beside the implementation so a tool cannot be renamed or given a new
+    argument without its schema moving too. The descriptions carry the two
+    instructions models most often get wrong: that a write replaces the whole
+    file, and that submitting is an explicit act rather than something implied
+    by falling silent.
+    """
+    return (
+        ToolSpec(
+            name="list_files",
+            description="List every file in the workspace, as relative paths.",
+            parameters=_NO_ARGUMENTS,
+        ),
+        ToolSpec(
+            name="read_file",
+            description="Read one file from the workspace and return its full contents.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace-relative path, e.g. solver/orders.py",
+                    }
+                },
+                "required": ["path"],
+            },
+        ),
+        ToolSpec(
+            name="write_file",
+            description=(
+                "Write a file, replacing its entire contents. There is no partial edit: "
+                "send the complete corrected file, not a diff or a fragment."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace-relative path."},
+                    "contents": {
+                        "type": "string",
+                        "description": "The complete new contents of the file.",
+                    },
+                },
+                "required": ["path", "contents"],
+            },
+        ),
+        ToolSpec(
+            name="run_tests",
+            description="Run the repository's test suite and return its output.",
+            parameters=_NO_ARGUMENTS,
+        ),
+        ToolSpec(
+            name="submit",
+            description=(
+                "Finish the task. Call this once the tests pass; the attempt does not "
+                "end until you do."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "One sentence on what you changed and why.",
+                    }
+                },
+                "required": ["summary"],
+            },
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,11 +132,17 @@ class ToolBox:
         self.recorder = recorder
         self.test_timeout_s = test_timeout_s if test_timeout_s is not None else case.timeout_s
         self._tests_passed: bool | None = None
+        self._submitted = False
 
     @property
     def tests_passed(self) -> bool | None:
         """Result of the most recent ``run_tests``; ``None`` if never run."""
         return self._tests_passed
+
+    @property
+    def submitted(self) -> bool:
+        """Whether the agent has declared itself finished."""
+        return self._submitted
 
     # -- tools -----------------------------------------------------------
 
@@ -89,8 +172,11 @@ class ToolBox:
         return ToolOutcome(ok=True, output=contents)
 
     def write_file(self, path: str, contents: str) -> ToolOutcome:
+        # The full contents go into the trace, not just their length. A write is
+        # the one action whose payload *is* the action, and recording only its
+        # size would make a trajectory impossible to replay faithfully.
         call_id = self.recorder.tool_call(
-            tool="write_file", args={"path": path, "bytes": len(contents)}
+            tool="write_file", args={"path": path, "contents": contents}
         )
         try:
             record = self.workspace.write_file(path, contents)
@@ -145,6 +231,7 @@ class ToolBox:
         call_id = self.recorder.tool_call(tool="submit", args={"summary": summary})
         self.recorder.tool_result(call_id=call_id, tool="submit", ok=True, output=summary)
         self.recorder.submission(summary=summary)
+        self._submitted = True
         return ToolOutcome(ok=True, output=summary)
 
     # -- internals -------------------------------------------------------

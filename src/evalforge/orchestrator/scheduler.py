@@ -14,6 +14,7 @@ leaves a store containing exactly the attempts that finished.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -122,7 +123,19 @@ class Scheduler:
 
         async def worker(index: int, job: Job) -> None:
             async with semaphore:
-                result = await self._run_job(job)
+                try:
+                    result = await self._run_job(job)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Last line of defence. Nothing should reach here, but a
+                    # batch runner that loses every result to one unhandled
+                    # exception is worse than one that records the casualty.
+                    result = _status_result(
+                        job,
+                        status="infra_error",
+                        error=f"unhandled {type(exc).__name__}: {exc}",
+                    )
             results[index] = result
             if self._on_result is not None:
                 self._on_result(result)
@@ -143,6 +156,7 @@ class Scheduler:
 
     async def _run_job(self, job: Job) -> CaseResult:
         last_error: Exception | None = None
+        started = time.monotonic()
 
         for attempt_index in range(self._retry.max_attempts):
             try:
@@ -158,6 +172,7 @@ class Scheduler:
                     job,
                     status="timed_out",
                     error=f"job exceeded {self._job_timeout_s:g}s",
+                    duration_s=time.monotonic() - started,
                 )
             except InfrastructureError as exc:
                 last_error = exc
@@ -171,15 +186,18 @@ class Scheduler:
             error=f"{type(last_error).__name__}: {last_error}"
             if last_error is not None
             else "infrastructure error",
+            duration_s=time.monotonic() - started,
         )
 
 
-def _status_result(job: Job, *, status: CaseStatus, error: str) -> CaseResult:
+def _status_result(
+    job: Job, *, status: CaseStatus, error: str, duration_s: float = 0.0
+) -> CaseResult:
     return CaseResult(
         case_id=job.case.case_id,
         attempt=job.attempt,
         status=status,
         passed=False,
-        duration_s=0.0,
+        duration_s=max(0.0, duration_s),
         error=error,
     )

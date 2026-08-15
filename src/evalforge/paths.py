@@ -12,3 +12,7 @@ STATE_DIR = Path(".evalforge")
 DEFAULT_DATABASE = STATE_DIR / "runs.db"
 DEFAULT_TRAJECTORY_DIR = STATE_DIR / "trajectories"
 DEFAULT_DATASETS_ROOT = Path("datasets")
+
+#: Cached model responses. Keeping them under the state directory means a
+#: repeated run costs no quota, and deleting the directory forces fresh calls.
+DEFAULT_CACHE_DIR = STATE_DIR / "model-cache"

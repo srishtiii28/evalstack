@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from evalforge.hashing import text_hash
+from evalforge.hashing import bytes_hash, text_hash
 from evalforge.schema.case import EvalCase
 
 #: Generated artefacts that must never count as agent edits.
@@ -232,8 +232,13 @@ class Workspace:
     # -- change tracking -------------------------------------------------
 
     def snapshot(self) -> dict[str, str]:
-        """Hash every tracked file, for diffing against a later state."""
-        return {name: text_hash(self.read_file(name)) for name in self.list_files()}
+        """Hash every tracked file, for diffing against a later state.
+
+        Hashes raw bytes rather than decoded text: a test run can leave a
+        coverage database or another binary artefact in the tree, and a diff
+        that crashes on undecodable bytes would take the whole run down with it.
+        """
+        return {name: bytes_hash(self.resolve(name).read_bytes()) for name in self.list_files()}
 
     def set_baseline(self) -> None:
         """Freeze the current contents as the reference for :meth:`diff`."""

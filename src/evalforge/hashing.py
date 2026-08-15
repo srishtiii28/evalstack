@@ -32,9 +32,23 @@ def content_hash(value: Any) -> str:
     return f"{HASH_PREFIX}{digest}"
 
 
+def bytes_hash(data: bytes) -> str:
+    """Return the prefixed SHA-256 hash of raw bytes.
+
+    Used for file contents, which are not always valid UTF-8: a test run can
+    leave a coverage database or a compiled artefact in the workspace, and
+    hashing those must not depend on them being decodable.
+    """
+    return f"{HASH_PREFIX}{hashlib.sha256(data).hexdigest()}"
+
+
 def text_hash(text: str) -> str:
-    """Return the prefixed SHA-256 hash of raw text (file contents, prompts)."""
-    return f"{HASH_PREFIX}{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+    """Return the prefixed SHA-256 hash of text, encoded as UTF-8.
+
+    Agrees with :func:`bytes_hash` on the same content, so a file hashed either
+    way compares equal.
+    """
+    return bytes_hash(text.encode("utf-8"))
 
 
 def short(hash_value: str, length: int = 12) -> str:

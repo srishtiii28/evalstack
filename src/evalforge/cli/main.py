@@ -9,6 +9,8 @@ import typer
 from rich.console import Console
 
 from evalforge import __version__
+from evalforge.agent.build import MODEL_PREFIX, ModelAgentSpec, model_agent_factory
+from evalforge.agent.model_agent import DEFAULT_MAX_STEPS, ModelAgentConfig
 from evalforge.agent.registry import agent_names
 from evalforge.cli.render import (
     render_case_results,
@@ -29,12 +31,16 @@ from evalforge.datasets.registry import DatasetNotFoundError, resolve_dataset
 from evalforge.env.limits import probe_limit_support
 from evalforge.evaluators.registry import suite_names
 from evalforge.hashing import short
+from evalforge.model.budget import BudgetGuard, BudgetLimits
+from evalforge.model.providers import GROQ, ProviderNotConfiguredError
 from evalforge.paths import (
+    DEFAULT_CACHE_DIR,
     DEFAULT_DATABASE,
     DEFAULT_DATASETS_ROOT,
     DEFAULT_TRAJECTORY_DIR,
 )
 from evalforge.pipeline import RunRequest, execute_run
+from evalforge.schema.result import RunResult
 from evalforge.store.db import Store
 
 console = Console()
@@ -155,6 +161,23 @@ def run_command(
         Path, typer.Option("--trajectories", help="Where trajectory traces are written.")
     ] = DEFAULT_TRAJECTORY_DIR,
     notes: Annotated[str, typer.Option("--notes", help="Free-text note stored with the run.")] = "",
+    provider: Annotated[
+        str, typer.Option("--provider", help="Model provider, for model agents.")
+    ] = GROQ.name,
+    max_steps: Annotated[
+        int, typer.Option("--max-steps", min=1, help="Tool-use steps a model agent may take.")
+    ] = DEFAULT_MAX_STEPS,
+    max_model_calls: Annotated[
+        int | None,
+        typer.Option("--max-model-calls", min=1, help="Cap model calls per run."),
+    ] = None,
+    max_model_tokens: Annotated[
+        int | None,
+        typer.Option("--max-model-tokens", min=1, help="Cap total tokens per run."),
+    ] = None,
+    no_cache: Annotated[
+        bool, typer.Option("--no-cache", help="Bypass the model response cache.")
+    ] = False,
     show_all: Annotated[
         bool, typer.Option("--all", help="Show every case row, not just the first page.")
     ] = False,
@@ -179,9 +202,24 @@ def run_command(
         notes=notes,
     )
 
+    guard: BudgetGuard | None = None
     try:
         with Store.open(database) as store:
-            result = asyncio.run(execute_run(request, store=store))
+            if agent.split(":", 1)[0] == MODEL_PREFIX:
+                spec = ModelAgentSpec.from_reference(
+                    agent,
+                    provider=provider,
+                    settings=ModelAgentConfig(max_steps=max_steps),
+                    budget=BudgetLimits(
+                        max_calls=max_model_calls, max_tokens=max_model_tokens
+                    ),
+                    cache_dir=None if no_cache else DEFAULT_CACHE_DIR,
+                )
+                result, guard = asyncio.run(_run_with_model(request, spec, store))
+            else:
+                result = asyncio.run(execute_run(request, store=store))
+    except ProviderNotConfiguredError as exc:
+        raise _fail(str(exc)) from exc
     except (KeyError, ValueError) as exc:
         raise _fail(str(exc)) from exc
 
@@ -192,8 +230,19 @@ def run_command(
     render_run_header(console, result)
     console.print()
     render_run_metrics(console, result)
+    if guard is not None:
+        console.print(f"[dim]model usage: {guard.describe()}[/dim]")
     console.print()
     render_case_results(console, result.case_results, limit=None if show_all else 40)
+
+
+async def _run_with_model(
+    request: RunRequest, spec: ModelAgentSpec, store: Store
+) -> tuple[RunResult, BudgetGuard]:
+    """Run with a shared HTTP pool, rate limiter and budget across all attempts."""
+    async with model_agent_factory(spec) as (make_agent, guard):
+        result = await execute_run(request, store=store, agent_factory=make_agent)
+    return result, guard
 
 
 @app.command("runs")

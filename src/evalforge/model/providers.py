@@ -132,6 +132,8 @@ def build_model_client(
     client: ModelClient = BudgetedModelClient(inner=transport, guard=guard, pricing=table)
 
     if cache_dir is not None:
-        client = CachingModelClient(inner=client, cache=ResponseCache(cache_dir))
+        client = CachingModelClient(
+            inner=client, cache=ResponseCache(cache_dir), scope=config.base_url
+        )
 
     return client, guard

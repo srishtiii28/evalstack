@@ -136,10 +136,16 @@ class ModelRequest:
     temperature: float = 0.0
     max_tokens: int = 2048
 
-    def cache_key(self, model: str) -> str:
-        """Content hash covering everything that can change the response."""
+    def cache_key(self, model: str, scope: str = "") -> str:
+        """Content hash covering everything that can change the response.
+
+        ``scope`` identifies the endpoint. Two providers commonly serve the same
+        model id — an open-weights model on Groq and on OpenRouter, say — and
+        without it one provider's cached answers would be served for the other.
+        """
         return content_hash(
             {
+                "scope": scope,
                 "model": model,
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,

@@ -31,9 +31,15 @@ from evalforge.model.base import (
 )
 
 SHARD_WIDTH = 2
-_VALID_STOP_REASONS: frozenset[str] = frozenset(
-    {"end_turn", "tool_use", "max_tokens", "stop_sequence", "other"}
-)
+
+
+def _coerce_stop_reason(value: str) -> StopReason:
+    """Narrow a persisted string back to the literal type, or fall back."""
+    match value:
+        case "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "other":
+            return value
+        case _:
+            return "other"
 
 
 def _encode(response: ModelResponse) -> dict[str, Any]:
@@ -52,8 +58,7 @@ def _encode(response: ModelResponse) -> dict[str, Any]:
 
 
 def _decode(payload: dict[str, Any]) -> ModelResponse:
-    raw_stop = str(payload.get("stop_reason") or "end_turn")
-    stop_reason: StopReason = raw_stop if raw_stop in _VALID_STOP_REASONS else "other"  # type: ignore[assignment]  # membership check narrows to the literal set
+    stop_reason = _coerce_stop_reason(str(payload.get("stop_reason") or "end_turn"))
 
     raw_usage = payload.get("usage") or {}
     tool_calls = tuple(
@@ -131,13 +136,16 @@ class CachingModelClient:
 
     inner: ModelClient
     cache: ResponseCache
+    #: Identifies the endpoint, so two providers serving the same model id do
+    #: not share cache entries.
+    scope: str = ""
 
     @property
     def model(self) -> str:
         return self.inner.model
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
-        key = request.cache_key(self.model)
+        key = request.cache_key(self.model, self.scope)
         cached = self.cache.get(key)
         if cached is not None:
             return cached

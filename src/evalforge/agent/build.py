@@ -46,13 +46,26 @@ class ModelAgentSpec:
     cache_dir: Path | None = DEFAULT_CACHE_DIR
 
     @classmethod
-    def from_reference(cls, reference: str, **overrides: object) -> ModelAgentSpec:
+    def from_reference(
+        cls,
+        reference: str,
+        *,
+        provider: str = GROQ.name,
+        settings: ModelAgentConfig | None = None,
+        budget: BudgetLimits | None = None,
+        cache_dir: Path | None = DEFAULT_CACHE_DIR,
+    ) -> ModelAgentSpec:
         """Parse ``model`` or ``model:<model-id>``."""
         scheme, separator, remainder = reference.partition(":")
         if scheme != MODEL_PREFIX:
             raise ValueError(f"not a model agent reference: {reference!r}")
-        model = remainder.strip() if separator and remainder.strip() else None
-        return cls(model=model, **overrides)  # type: ignore[arg-type]  # overrides are field values
+        return cls(
+            provider=provider,
+            model=remainder.strip() if separator and remainder.strip() else None,
+            settings=settings or ModelAgentConfig(),
+            budget=budget or BudgetLimits(),
+            cache_dir=cache_dir,
+        )
 
 
 @contextlib.asynccontextmanager

@@ -200,19 +200,24 @@ class ChatCompletionsClient:
         return payload
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
-        if self._rate_limiter is not None:
-            await self._rate_limiter.acquire(request.estimated_input_tokens() + request.max_tokens)
-
+        estimated_tokens = request.estimated_input_tokens() + request.max_tokens
         started = time.monotonic()
-        data = await self._post_with_retries(self._payload(request))
+        data = await self._post_with_retries(self._payload(request), estimated_tokens)
         latency_ms = (time.monotonic() - started) * 1000.0
         return self._to_response(data, latency_ms)
 
-    async def _post_with_retries(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post_with_retries(
+        self, payload: dict[str, Any], estimated_tokens: int
+    ) -> dict[str, Any]:
         url = f"{self._base_url}{CHAT_COMPLETIONS_PATH}"
         last_error: Exception | None = None
 
         for attempt in range(self._max_retries + 1):
+            # Every attempt is paced, not just the first. A retried request costs
+            # the provider's allowance exactly as much as the original, so pacing
+            # only the first one lets a burst of 429s spend quota unaccounted for.
+            if self._rate_limiter is not None:
+                await self._rate_limiter.acquire(estimated_tokens)
             try:
                 response = await self._http.post(
                     url, json=payload, headers=self._headers(), timeout=self._timeout_s

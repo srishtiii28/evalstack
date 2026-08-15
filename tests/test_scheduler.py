@@ -164,6 +164,9 @@ async def test_timeout_is_recorded_and_not_retried() -> None:
     assert len(backend.calls) == 1
     assert results[0].status == "timed_out"
     assert "0.05s" in (results[0].error or "")
+    # A timeout that reported zero duration would drag the mean down and hide
+    # exactly the slowness it is evidence of.
+    assert results[0].duration_s > 0.0
 
 
 async def test_results_are_reported_as_they_land() -> None:

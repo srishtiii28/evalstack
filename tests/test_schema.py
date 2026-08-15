@@ -319,6 +319,27 @@ def test_evaluator_scores_average_across_completed_attempts() -> None:
     assert run.total_input_tokens == 200
 
 
+def test_mean_duration_ignores_attempts_that_never_completed() -> None:
+    slow = make_case_result("a", passed=True).model_copy(update={"duration_s": 4.0})
+    aborted = make_case_result("b", passed=False, status="timed_out").model_copy(
+        update={"duration_s": 100.0}
+    )
+    run = RunResult(
+        run_id="run-1",
+        agent_ref="a",
+        agent_hash="h",
+        dataset_name="synth",
+        dataset_version="v1",
+        dataset_hash="h",
+        suite_name="default",
+        suite_hash="h",
+        case_results=(slow, aborted),
+    )
+
+    # A timeout says nothing about how long the agent takes when it works.
+    assert run.mean_duration_s == 4.0
+
+
 def test_case_result_evaluator_lookup() -> None:
     result = make_case_result("a", passed=True)
 

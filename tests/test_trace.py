@@ -132,6 +132,13 @@ def test_short_text_is_left_alone() -> None:
     assert truncate("short", 50) == "short"
 
 
+@pytest.mark.parametrize("limit", [10, 40, 120, 4000])
+def test_truncation_never_exceeds_its_own_budget(limit: int) -> None:
+    # The elision marker counts against the limit; a truncation that overshoots
+    # defeats the point when the result is about to be written to a trace.
+    assert len(truncate("x" * 50_000, limit)) <= limit
+
+
 def test_truncate_rejects_a_non_positive_limit() -> None:
     with pytest.raises(ValueError, match="limit must be positive"):
         truncate("anything", 0)

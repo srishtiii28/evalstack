@@ -172,6 +172,20 @@ async def test_case_ids_with_awkward_characters_get_safe_filenames(tmp_path: Pat
     assert traces.resolve() in path.resolve().parents
 
 
+async def test_case_ids_that_sanitise_alike_get_distinct_files(tmp_path: Path) -> None:
+    traces = tmp_path / "traces"
+    backend = make_backend(QuietAgent, config=RunnerConfig(trajectory_dir=traces))
+
+    # Both reduce to "a_b" once sanitised; without disambiguation one would
+    # silently overwrite the other's trajectory.
+    first = await backend.execute(Job(case=make_case("a/b")))
+    second = await backend.execute(Job(case=make_case("a b")))
+
+    assert first.trajectory_path != second.trajectory_path
+    assert Path(first.trajectory_path or "").is_file()
+    assert Path(second.trajectory_path or "").is_file()
+
+
 async def test_attempt_duration_is_measured() -> None:
     backend = make_backend(QuietAgent)
 

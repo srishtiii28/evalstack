@@ -67,20 +67,32 @@ class FakeClock:
 
 
 def truncate(text: str, limit: int = DEFAULT_MAX_OUTPUT_CHARS) -> str:
-    """Shorten ``text`` to ``limit`` characters, keeping both ends.
+    """Shorten ``text`` to at most ``limit`` characters, keeping both ends.
 
     Head and tail are both kept because the informative part differs by source:
     a traceback leads with the failing assertion, a pytest run ends with the
     summary line.
+
+    The elision marker is counted against the limit, so the result never exceeds
+    it — a truncation that overshoots its own budget defeats the point when the
+    output is about to be written into a trace file.
     """
     if limit <= 0:
         raise ValueError("limit must be positive")
     if len(text) <= limit:
         return text
-    marker = _ELISION.format(omitted=len(text) - limit)
-    head = limit // 2
-    tail = limit - head
-    return f"{text[:head]}{marker}{text[-tail:]}"
+
+    # The marker's own length depends on the omitted count, so budget against
+    # its widest possible form rather than iterating to a fixed point.
+    widest_marker = len(_ELISION.format(omitted=len(text)))
+    budget = max(0, limit - widest_marker)
+    if budget == 0:
+        return text[:limit]
+
+    head = budget // 2
+    tail = budget - head
+    marker = _ELISION.format(omitted=len(text) - budget)
+    return f"{text[:head]}{marker}{text[-tail:]}" if tail else f"{text[:head]}{marker}"
 
 
 class TrajectoryRecorder:

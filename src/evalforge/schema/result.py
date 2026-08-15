@@ -115,9 +115,16 @@ class RunResult(BaseModel):
 
     @property
     def mean_duration_s(self) -> float:
-        if not self.case_results:
+        """Mean wall time over *completed* attempts.
+
+        Restricted to completed attempts for the same reason as
+        :attr:`success_rate`: a run that timed out or hit an infrastructure
+        fault says nothing about how long the agent takes when it works.
+        """
+        completed = self.completed_results
+        if not completed:
             return 0.0
-        return sum(result.duration_s for result in self.case_results) / len(self.case_results)
+        return sum(result.duration_s for result in completed) / len(completed)
 
     def tallies(self) -> dict[str, CaseTally]:
         """Per-case pass counts over completed attempts, keyed by case id."""

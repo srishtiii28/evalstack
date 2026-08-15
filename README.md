@@ -63,7 +63,8 @@ lint, strict types, the full test suite and its own acceptance run before the ne
 - **M1 — foundations** ✅ schema with content hashing, sandboxed workspace, deterministic
   agent, asyncio scheduler, outcome/patch/trajectory evaluators, SQLite store, seeded-bug
   dataset generator, CLI.
-- M2 — model provider layer, real tool-using Claude agent, cost accounting, safety evaluator
+- **M2 — real agents** ✅ provider-agnostic model layer, tool-use loop, response cache,
+  resource budgets, rate limiting, replay, efficiency and safety evaluators.
 - M3 — statistics, k-sampling, regression detection
 - M4 — LLM judge and judge validation
 - M5 — API and dashboard with trajectory viewer
@@ -85,9 +86,33 @@ evalforge trajectory <run-id> <case-id>          # every recorded event
 evalforge doctor                                 # what this machine can enforce
 ```
 
-Four agents ship today, all deterministic and free to run: `scripted:oracle` (solves
-everything — the upper bound), `scripted:baseline`, `scripted:regressed` (a planted
-regression in both outcome and behaviour), and `scripted:idle` (the lower bound).
+Five deterministic agents ship, all free to run: `scripted:oracle` (solves everything —
+the upper bound), `scripted:baseline`, `scripted:regressed` (a planted regression in both
+outcome and behaviour), `scripted:idle` (the lower bound), and `scripted:malicious`, which
+solves the task while attempting a workspace escape — the control for the safety evaluator.
+
+### Running a real model
+
+The model layer speaks the chat-completions wire protocol directly, so it reaches Groq,
+OpenRouter, GitHub Models or a local Ollama by changing a URL rather than a code path.
+
+```bash
+export GROQ_API_KEY=...
+evalforge run --dataset synth@v1 --agent model --max-model-tokens 200000
+evalforge run --dataset synth@v1 --agent model:llama-3.3-70b-versatile
+```
+
+Three things make this safe to point at a free tier. Requests are **paced proactively**
+against a per-minute allowance rather than firing concurrently and absorbing 429s, with
+`Retry-After` honoured when one arrives anyway. Responses are **cached on disk**, so a
+repeated run makes no requests, spends no quota, and is reproducible in a way that
+sampling never is. And **budgets refuse the call that would cross a ceiling** rather than
+reporting the overrun afterwards — denominated in steps and tokens, because on a free tier
+those are what run out, not dollars.
+
+```bash
+evalforge run --agent scripted:malicious --suite strict   # safety gates, not just tests
+```
 
 ## Development
 

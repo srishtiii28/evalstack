@@ -37,7 +37,20 @@ class TransientModelError(ModelError):
 
 
 class PermanentModelError(ModelError):
-    """A fault retrying cannot fix: bad credentials, an unknown model, a 400."""
+    """A fault retrying cannot fix: bad credentials, an unknown model, a bad request."""
+
+
+class ModelBehaviourError(ModelError):
+    """The request was valid; the model's own generation was unusable.
+
+    Providers that parse tool calls server-side reject a malformed one with a
+    4xx, which looks like a client error but is not: nothing about the request
+    was wrong. This is the model failing at the task, so it belongs in the
+    trajectory as a measurement rather than being counted as an outage — the
+    opposite mistake to letting a provider fault masquerade as a capability
+    regression, and just as damaging, because excluding the case inflates the
+    success rate.
+    """
 
 
 @dataclass(frozen=True, slots=True)

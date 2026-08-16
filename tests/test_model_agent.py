@@ -18,6 +18,7 @@ from evalforge.datasets.builder import blueprint_to_case
 from evalforge.datasets.catalogue import TEMPLATES
 from evalforge.env.workspace import workspace_for
 from evalforge.model.base import (
+    ModelBehaviourError,
     ModelRequest,
     ModelResponse,
     PermanentModelError,
@@ -287,3 +288,27 @@ def test_the_agent_is_named_after_its_model() -> None:
 def test_nonsense_settings_are_rejected() -> None:
     with pytest.raises(ValueError, match="max_steps must be at least 1"):
         ModelAgentConfig(max_steps=0)
+
+
+# -- a failed generation is the model's failure, not an outage ------------
+
+
+async def test_a_failed_generation_is_scored_not_raised(tmp_path: Path) -> None:
+    """Providers parse tool calls server-side and reject a bad one with a 4xx.
+
+    Nothing about the request was wrong, so treating it as infrastructure would
+    drop the case from the success rate and quietly flatter the agent.
+    """
+    case = off_by_one_case()
+    client = ScriptedModel(
+        turn(call("list_files")),
+        ModelBehaviourError("the model produced an unusable tool call (HTTP 400)"),
+    )
+
+    trajectory, result = await drive(client, case=case, base_dir=tmp_path)
+
+    errors = trajectory.of_type(AgentError)
+    assert errors[0].error_type == "ModelBehaviourError"
+    # The attempt completed and is scored on what it managed: nothing fixed.
+    assert result.ok is False
+    assert trajectory.of_type(ToolCall)[0].tool == "list_files"

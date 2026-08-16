@@ -31,6 +31,7 @@ from pydantic import JsonValue
 
 from evalforge.model.base import (
     Message,
+    ModelBehaviourError,
     ModelRequest,
     ModelResponse,
     PermanentModelError,
@@ -62,6 +63,35 @@ _STOP_REASONS: dict[str, StopReason] = {
 }
 
 _RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+#: How much of a rejected generation to keep. Generous on purpose: this is the
+#: only evidence of why an attempt failed, and 400 characters proved too few to
+#: see where the model's JSON escaping went wrong.
+FAILED_GENERATION_CAPTURE_CHARS = 1200
+
+#: Markers that a 4xx describes the model's generation rather than the request.
+_FAILED_GENERATION_MARKERS = ("failed_generation", "failed to call a function")
+
+
+def _failed_generation(response: httpx.Response) -> str | None:
+    """Return the offending generation when a 4xx blames the model's output."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+
+    error = body.get("error")
+    error_map = error if isinstance(error, dict) else {}
+    generation = error_map.get("failed_generation") or body.get("failed_generation")
+    if generation:
+        return str(generation)[:FAILED_GENERATION_CAPTURE_CHARS]
+
+    message = str(error_map.get("message") or error or "").lower()
+    if any(marker in message for marker in _FAILED_GENERATION_MARKERS):
+        return "(provider reported a failed generation without returning it)"
+    return None
 
 
 def _tool_payload(tool: ToolSpec) -> dict[str, Any]:
@@ -239,6 +269,12 @@ class ChatCompletionsClient:
                         )
                         continue
                 else:
+                    generation = _failed_generation(response)
+                    if generation is not None:
+                        raise ModelBehaviourError(
+                            f"the model produced an unusable tool call "
+                            f"(HTTP {response.status_code}): {generation}"
+                        )
                     raise PermanentModelError(
                         f"HTTP {response.status_code} from {self._base_url}: {detail}"
                     )

@@ -27,6 +27,7 @@ from evalforge.agent.base import Agent, AgentContext
 from evalforge.agent.tools import ToolBox, ToolOutcome, tool_specs
 from evalforge.model.base import (
     Message,
+    ModelBehaviourError,
     ModelClient,
     ModelRequest,
     PermanentModelError,
@@ -135,6 +136,12 @@ class ModelAgent(Agent):
             except BudgetExceeded as exc:
                 # A ceiling is a fact about the attempt, so it is scored, not raised.
                 recorder.agent_error(error_type="BudgetExceeded", message=str(exc))
+                return
+            except ModelBehaviourError as exc:
+                # The model could not produce a usable tool call. That is the
+                # agent failing the task, so the attempt is scored on what it
+                # managed rather than discarded as an outage.
+                recorder.agent_error(error_type="ModelBehaviourError", message=str(exc))
                 return
             except PermanentModelError as exc:
                 raise FatalInfrastructureError(f"model rejected the request: {exc}") from exc

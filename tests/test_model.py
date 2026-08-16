@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from evalforge.model.base import (
+    ModelBehaviourError,
     ModelRequest,
     ModelResponse,
     PermanentModelError,
@@ -555,3 +556,36 @@ def test_input_estimation_grows_with_the_conversation() -> None:
 
     assert long_request.estimated_input_tokens() > short_request.estimated_input_tokens()
     assert short_request.estimated_input_tokens() >= 1
+
+
+# -- failed generations vs genuine bad requests ---------------------------
+
+
+async def test_a_failed_generation_is_reported_as_model_behaviour() -> None:
+    body = {
+        "error": {
+            "message": "Failed to call a function. Please adjust your prompt.",
+            "failed_generation": '<function=write_file>{"path": "a.py"',
+        }
+    }
+    client, http = build_client(lambda _r: httpx.Response(400, json=body), max_retries=2)
+    async with http:
+        with pytest.raises(ModelBehaviourError, match="unusable tool call"):
+            await client.complete(make_request())
+
+
+async def test_a_failed_generation_without_the_payload_is_still_detected() -> None:
+    body = {"error": {"message": "Failed to call a function. Please adjust your prompt."}}
+    client, http = build_client(lambda _r: httpx.Response(400, json=body))
+    async with http:
+        with pytest.raises(ModelBehaviourError):
+            await client.complete(make_request())
+
+
+async def test_a_genuine_bad_request_is_still_permanent() -> None:
+    body = {"error": {"message": "model `nonexistent` does not exist"}}
+    client, http = build_client(lambda _r: httpx.Response(404, json=body))
+    async with http:
+        # Misreading this as the model misbehaving would hide a config error.
+        with pytest.raises(PermanentModelError, match="does not exist"):
+            await client.complete(make_request())

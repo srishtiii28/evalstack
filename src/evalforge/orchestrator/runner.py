@@ -147,7 +147,13 @@ class LocalBackend:
                         f"evaluator raised {type(exc).__name__}: {exc}"
                     ) from exc
         except OSError as exc:
+            self._persist(recorder.build())
             raise InfrastructureError(f"workspace failure: {exc}") from exc
+        except InfrastructureError:
+            # Keep the trace. A run that fails is precisely the one whose
+            # trajectory you need, and discarding it leaves nothing to diagnose.
+            self._persist(recorder.build())
+            raise
 
         duration_s = time.monotonic() - started
         trajectory = recorder.build()

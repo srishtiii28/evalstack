@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pydantic import JsonValue
 
 from evalforge.agent.base import Agent, AgentContext
-from evalforge.agent.tools import ToolBox, ToolOutcome, tool_specs
+from evalforge.agent.tools import WHOLE_FILE_SURFACE, ToolBox, ToolOutcome, tool_specs
 from evalforge.model.base import (
     Message,
     ModelBehaviourError,
@@ -78,6 +78,7 @@ class ModelAgentConfig:
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    tool_surface: str = WHOLE_FILE_SURFACE
 
     def __post_init__(self) -> None:
         if self.max_steps < 1:
@@ -93,6 +94,11 @@ class ModelAgentConfig:
             # The prompt is part of the configuration: changing it changes the
             # agent, and the run hash should say so.
             "system_prompt": self.system_prompt,
+            # So are the tools. Which tools an agent has changes what it can do
+            # at least as much as its prompt does, and two runs claiming the same
+            # agent while holding different tools would be a false comparison.
+            "tool_surface": self.tool_surface,
+            "tools": [spec.name for spec in tool_specs(self.tool_surface)],
         }
 
 
@@ -114,7 +120,7 @@ class ModelAgent(Agent):
         case = context.case
         recorder = context.recorder
         tools = ToolBox(case=case, workspace=context.workspace, recorder=recorder)
-        specs = tool_specs()
+        specs = tool_specs(self.settings.tool_surface)
 
         recorder.task_started(prompt_hash=case.content_hash)
 
@@ -198,13 +204,20 @@ class ModelAgent(Agent):
                 if path is None or contents is None:
                     return "error: write_file needs string 'path' and 'contents' arguments"
                 return _render(tools.write_file(path, contents))
+            case "replace_text":
+                path = _string_argument(call, "path")
+                old = _string_argument(call, "old")
+                new = _string_argument(call, "new")
+                if path is None or old is None or new is None:
+                    return "error: replace_text needs string 'path', 'old' and 'new' arguments"
+                return _render(tools.replace_text(path, old, new))
             case "run_tests":
                 return _render(await tools.run_tests())
             case "submit":
                 summary = _string_argument(call, "summary") or ""
                 return _render(tools.submit(summary))
             case _:
-                known = ", ".join(spec.name for spec in tool_specs())
+                known = ", ".join(spec.name for spec in tool_specs(self.settings.tool_surface))
                 return f"error: no tool named {call.name!r}. Available tools: {known}"
 
 

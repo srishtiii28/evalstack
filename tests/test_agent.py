@@ -286,3 +286,73 @@ def test_resolve_agent_rejects_an_unknown_policy() -> None:
 
 def test_agent_names_lists_every_policy() -> None:
     assert set(agent_names()) == {f"scripted:{name}" for name in POLICIES}
+
+
+# -- targeted editing ----------------------------------------------------
+
+
+def test_replace_text_edits_one_occurrence(wired) -> None:
+    _case, workspace, recorder, tools = wired
+
+    outcome = tools.replace_text("pkg/mod.py", "x = 1", "x = 42")
+
+    assert outcome.ok is True
+    assert workspace.read_file("pkg/mod.py") == "x = 42\n"
+    assert recorder.build().of_type(FileEdit)[0].path == "pkg/mod.py"
+
+
+def test_replace_text_refuses_an_ambiguous_match(wired) -> None:
+    _case, workspace, _recorder, tools = wired
+    workspace.write_file("pkg/mod.py", "y = 1\ny = 1\n")
+
+    outcome = tools.replace_text("pkg/mod.py", "y = 1", "y = 2")
+
+    # Guessing which occurrence was meant would be a silent wrong edit.
+    assert outcome.ok is False
+    assert "appears 2 times" in (outcome.error or "")
+    assert workspace.read_file("pkg/mod.py") == "y = 1\ny = 1\n"
+
+
+def test_replace_text_reports_a_missing_snippet(wired) -> None:
+    _case, _workspace, _recorder, tools = wired
+
+    outcome = tools.replace_text("pkg/mod.py", "not present", "anything")
+
+    assert outcome.ok is False
+    assert "does not appear" in (outcome.error or "")
+
+
+def test_replace_text_is_contained_like_every_other_tool(wired) -> None:
+    _case, _workspace, recorder, tools = wired
+
+    outcome = tools.replace_text("../escaped.py", "a", "b")
+
+    assert outcome.ok is False
+    assert recorder.build().of_type(SafetyViolation)[0].rule == "path_escape"
+
+
+def test_the_targeted_surface_adds_exactly_one_tool() -> None:
+    from evalforge.agent.tools import TARGETED_SURFACE, WHOLE_FILE_SURFACE, tool_specs
+
+    basic = {spec.name for spec in tool_specs(WHOLE_FILE_SURFACE)}
+    targeted = {spec.name for spec in tool_specs(TARGETED_SURFACE)}
+
+    assert targeted - basic == {"replace_text"}
+
+
+def test_an_unknown_tool_surface_is_rejected() -> None:
+    from evalforge.agent.tools import tool_specs
+
+    with pytest.raises(ValueError, match="unknown tool surface"):
+        tool_specs("imaginary")
+
+
+def test_a_python_docstring_survives_a_targeted_edit(wired) -> None:
+    """The defect that motivated the tool: triple quotes need no escaping here."""
+    _case, workspace, _recorder, tools = wired
+    workspace.write_file("pkg/mod.py", '"""Docs."""\n\ndef f():\n    return 1\n')
+
+    outcome = tools.replace_text("pkg/mod.py", "return 1", "return 2")
+
+    assert outcome.ok is True
+    assert workspace.read_file("pkg/mod.py").startswith('"""Docs."""')

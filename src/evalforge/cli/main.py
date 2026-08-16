@@ -12,6 +12,7 @@ from evalforge import __version__
 from evalforge.agent.build import MODEL_PREFIX, ModelAgentSpec, model_agent_factory
 from evalforge.agent.model_agent import DEFAULT_MAX_STEPS, ModelAgentConfig
 from evalforge.agent.registry import agent_names
+from evalforge.agent.tools import TOOL_SURFACES, WHOLE_FILE_SURFACE
 from evalforge.cli.render import (
     render_case_results,
     render_comparison,
@@ -35,6 +36,7 @@ from evalforge.evaluators.registry import suite_names
 from evalforge.hashing import short
 from evalforge.model.budget import BudgetGuard, BudgetLimits
 from evalforge.model.providers import GROQ, ProviderNotConfiguredError
+from evalforge.orchestrator.scheduler import DEFAULT_JOB_TIMEOUT_S
 from evalforge.paths import (
     DEFAULT_CACHE_DIR,
     DEFAULT_DATABASE,
@@ -189,6 +191,12 @@ def run_command(
         int | None,
         typer.Option("--max-model-tokens", min=1, help="Cap total tokens per run."),
     ] = None,
+    tools: Annotated[
+        str, typer.Option("--tools", help=f"Tool surface: {', '.join(TOOL_SURFACES)}.")
+    ] = WHOLE_FILE_SURFACE,
+    job_timeout: Annotated[
+        float, typer.Option("--job-timeout", min=1.0, help="Seconds before an attempt is reaped.")
+    ] = DEFAULT_JOB_TIMEOUT_S,
     no_cache: Annotated[
         bool, typer.Option("--no-cache", help="Bypass the model response cache.")
     ] = False,
@@ -213,6 +221,7 @@ def run_command(
         concurrency=concurrency,
         case_ids=tuple(case or ()),
         trajectory_dir=trajectories,
+        job_timeout_s=job_timeout,
         notes=notes,
     )
 
@@ -223,7 +232,7 @@ def run_command(
                 spec = ModelAgentSpec.from_reference(
                     agent,
                     provider=provider,
-                    settings=ModelAgentConfig(max_steps=max_steps),
+                    settings=ModelAgentConfig(max_steps=max_steps, tool_surface=tools),
                     budget=BudgetLimits(
                         max_calls=max_model_calls, max_tokens=max_model_tokens
                     ),

@@ -65,7 +65,9 @@ lint, strict types, the full test suite and its own acceptance run before the ne
   dataset generator, CLI.
 - **M2 — real agents** ✅ provider-agnostic model layer, tool-use loop, response cache,
   resource budgets, rate limiting, replay, efficiency and safety evaluators.
-- M3 — statistics, k-sampling, regression detection
+- **M3 — statistics** ✅ Wilson intervals, paired bootstrap, McNemar's exact test,
+  power analysis, pass@k vs pass^k, and `evalforge compare` with a verdict rather than
+  a delta.
 - M4 — LLM judge and judge validation
 - M5 — API and dashboard with trajectory viewer
 - M6 — failure clustering, cost-aware selection, CI eval gate
@@ -116,6 +118,38 @@ those are what run out, not dollars.
 ```bash
 evalforge run --agent scripted:malicious --suite strict   # safety gates, not just tests
 ```
+
+### Comparing two runs
+
+```bash
+evalforge run --agent scripted:oracle    # baseline
+evalforge run --agent scripted:baseline  # candidate
+evalforge compare <run-a> <run-b> --fail-on-regression
+```
+
+A comparison reports a verdict and its evidence, never a bare delta:
+
+```
+verdict: regression
+before        100.0%
+after          76.7%
+difference    -23.3% [-40.0, -10.0]
+p-value       0.0156
+paired outcomes: 0 fixed, 7 broken, 23 stable pass, 0 stable fail
+broke: missing_tiebreak-007, shared_mutable_state-002, ...
+```
+
+When nothing reaches significance it says so *and* says what it would have taken:
+
+```
+verdict: no significant change
+difference    -10.0% [-23.3, 0.0]
+p-value       0.2500
+underpowered: detecting a 10.0% difference needs about 234 cases; this run compared 30
+```
+
+That distinction matters. "No significant change" and "this dataset is too small to
+tell" are different findings, and conflating them is how teams end up shipping on noise.
 
 ## Development
 

@@ -14,6 +14,7 @@ from evalforge.agent.model_agent import DEFAULT_MAX_STEPS, ModelAgentConfig
 from evalforge.agent.registry import agent_names
 from evalforge.cli.render import (
     render_case_results,
+    render_comparison,
     render_run_header,
     render_run_list,
     render_run_metrics,
@@ -41,7 +42,9 @@ from evalforge.paths import (
     DEFAULT_TRAJECTORY_DIR,
 )
 from evalforge.pipeline import RunRequest, execute_run
+from evalforge.regression.compare import compare
 from evalforge.schema.result import RunResult
+from evalforge.stats.significance import DEFAULT_ALPHA
 from evalforge.store.db import Store
 
 console = Console()
@@ -316,6 +319,65 @@ def show_command(
     render_run_metrics(console, result)
     console.print()
     render_case_results(console, result.case_results, limit=None if show_all else 40)
+
+
+@app.command("compare")
+def compare_command(
+    before: Annotated[str, typer.Argument(help="Baseline run id.")],
+    after: Annotated[str, typer.Argument(help="Candidate run id.")],
+    database: Annotated[Path, typer.Option("--db", help="Results database.")] = DEFAULT_DATABASE,
+    alpha: Annotated[
+        float, typer.Option("--alpha", min=0.0, max=1.0, help="Significance threshold.")
+    ] = DEFAULT_ALPHA,
+    fail_on_regression: Annotated[
+        bool,
+        typer.Option("--fail-on-regression", help="Exit non-zero on a significant regression."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit JSON instead of tables.")] = False,
+) -> None:
+    """Compare two runs and say whether the difference is real."""
+    with Store.open(database) as store:
+        try:
+            baseline = store.load_run(before)
+            candidate = store.load_run(after)
+        except KeyError as exc:
+            raise _fail(str(exc)) from exc
+
+    report = compare(baseline, candidate, alpha=alpha)
+
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "before_run_id": report.before_run_id,
+                    "after_run_id": report.after_run_id,
+                    "before_rate": report.before_rate,
+                    "after_rate": report.after_rate,
+                    "delta": report.delta,
+                    "interval": {"low": report.interval.low, "high": report.interval.high},
+                    "p_value": report.test.p_value,
+                    "verdict": report.verdict,
+                    "shared_cases": report.shared_cases,
+                    "required_cases": report.required_cases,
+                    "underpowered": report.underpowered,
+                    "warnings": list(report.warnings),
+                    "transitions": [
+                        {"case_id": t.case_id, "kind": t.kind, "delta": t.delta}
+                        for t in report.transitions
+                        if t.kind in {"fixed", "broken", "mixed"}
+                    ],
+                    "dimensions": [
+                        {"name": d.name, "before": d.before, "after": d.after, "delta": d.delta}
+                        for d in report.dimensions
+                    ],
+                }
+            )
+        )
+    else:
+        render_comparison(console, report)
+
+    if fail_on_regression and report.verdict == "regression":
+        raise typer.Exit(EXIT_CHECK_FAILED)
 
 
 @app.command("trajectory")

@@ -4,7 +4,9 @@ from rich.console import Console
 from rich.table import Table
 
 from evalforge.hashing import short
+from evalforge.regression.compare import ComparisonReport
 from evalforge.schema.result import CaseResult, RunResult
+from evalforge.stats.sampling import max_usable_k, stability_report
 from evalforge.store.db import RunSummary
 
 PASS_MARK = "[green]pass[/green]"
@@ -48,6 +50,16 @@ def render_run_metrics(console: Console, run: RunResult) -> None:
 
     for name, score in run.evaluator_scores().items():
         table.add_row(f"mean {name}", f"{score:.3f}")
+
+    # With repeated samples, capability and reliability come apart, and the gap
+    # between them is the thing a single success rate cannot show.
+    tallies = {case_id: (t.passed, t.total) for case_id, t in run.tallies().items()}
+    k = max_usable_k(tallies.values())
+    if k > 1:
+        stability = stability_report(tallies, k=k)
+        table.add_row(f"pass@{k} (capability)", f"{stability.pass_at_k:.1%}")
+        table.add_row(f"pass^{k} (reliability)", f"{stability.pass_hat_k:.1%}")
+        table.add_row("flaky cases", str(stability.flaky_cases))
 
     statuses = {
         status: count
@@ -140,3 +152,68 @@ def render_run_list(console: Console, summaries: tuple[RunSummary, ...]) -> None
         )
 
     console.print(table)
+
+
+def render_comparison(console: Console, report: ComparisonReport) -> None:
+    """Show a comparison as a verdict with its evidence, never a bare delta."""
+    for warning in report.warnings:
+        console.print(f"[yellow]warning:[/yellow] {warning}")
+    if report.warnings:
+        console.print()
+
+    verdict_style = {
+        "regression": "red",
+        "improvement": "green",
+        "no significant change": "dim",
+        "not comparable": "yellow",
+    }[report.verdict]
+    console.print(f"verdict: [{verdict_style}]{report.verdict}[/{verdict_style}]")
+
+    summary = Table(show_header=False, box=None, pad_edge=False)
+    summary.add_column(style="dim")
+    summary.add_column(justify="right")
+    summary.add_row("before", f"{report.before_rate:.1%}  [dim]{report.before_run_id}[/dim]")
+    summary.add_row("after", f"{report.after_rate:.1%}  [dim]{report.after_run_id}[/dim]")
+    summary.add_row("difference", report.interval.format())
+    summary.add_row("p-value", f"{report.test.p_value:.4f}")
+    summary.add_row("shared cases", str(report.shared_cases))
+    console.print(summary)
+
+    counts = report.test.counts
+    console.print(
+        f"\n[dim]paired outcomes:[/dim] {counts.only_after_passed} fixed, "
+        f"{counts.only_before_passed} broken, "
+        f"{counts.both_passed} stable pass, {counts.both_failed} stable fail"
+    )
+
+    if report.underpowered:
+        console.print(
+            f"[yellow]underpowered:[/yellow] detecting a "
+            f"{abs(report.delta):.1%} difference needs about "
+            f"{report.required_cases} cases; this run compared {report.shared_cases}"
+        )
+
+    broken = report.transitions_of("broken")
+    if broken:
+        console.print("\n[red]broke:[/red] " + ", ".join(t.case_id for t in broken))
+    fixed = report.transitions_of("fixed")
+    if fixed:
+        console.print("[green]fixed:[/green] " + ", ".join(t.case_id for t in fixed))
+
+    movers = [d for d in report.dimensions if abs(d.delta) > 1e-9]
+    if movers:
+        table = Table(title="dimensions", title_justify="left", box=None, pad_edge=False)
+        table.add_column("evaluator", style="dim", overflow="fold")
+        table.add_column("before", justify="right")
+        table.add_column("after", justify="right")
+        table.add_column("delta", justify="right")
+        for dimension in movers:
+            colour = "green" if dimension.delta > 0 else "red"
+            table.add_row(
+                dimension.name,
+                f"{dimension.before:.3f}",
+                f"{dimension.after:.3f}",
+                f"[{colour}]{dimension.delta:+.3f}[/{colour}]",
+            )
+        console.print()
+        console.print(table)

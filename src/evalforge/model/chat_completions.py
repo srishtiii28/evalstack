@@ -255,6 +255,7 @@ class ChatCompletionsClient:
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = TransientModelError(f"{type(exc).__name__}: {exc}")
             else:
+                self._learn_limits(response)
                 if response.status_code < 400:
                     return self._decode(response)
 
@@ -283,6 +284,17 @@ class ChatCompletionsClient:
                 await self._sleep(_backoff_for(attempt))
 
         raise last_error if last_error is not None else TransientModelError("request failed")
+
+    def _learn_limits(self, response: httpx.Response) -> None:
+        if self._rate_limiter is None:
+            return
+        raw = response.headers.get("x-ratelimit-limit-tokens")
+        if not raw:
+            return
+        try:
+            self._rate_limiter.observe(tokens_per_minute=int(raw))
+        except ValueError:
+            return
 
     @staticmethod
     def _decode(response: httpx.Response) -> dict[str, Any]:

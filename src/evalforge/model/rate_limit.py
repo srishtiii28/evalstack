@@ -72,6 +72,27 @@ class RateLimiter:
     def limits(self) -> RateLimits:
         return self._limits
 
+    def observe(self, *, tokens_per_minute: int | None = None) -> bool:
+        """Adopt an allowance the provider reported, when it is tighter than ours.
+
+        Providers return their real limits on every response. Guessing instead
+        is how this pacer ended up configured at 7.5x the true token rate, which
+        turned every burst into a wall of 429s and made attempts look hung.
+
+        Only tightening is applied: a header is evidence about a ceiling, and
+        loosening on one risks overrunning a limit that other clients share.
+        """
+        if tokens_per_minute is None or tokens_per_minute < 1:
+            return False
+        current = self._limits.tokens_per_minute
+        if current is not None and current <= tokens_per_minute:
+            return False
+        self._limits = RateLimits(
+            requests_per_minute=self._limits.requests_per_minute,
+            tokens_per_minute=tokens_per_minute,
+        )
+        return True
+
     def _prune(self, now: float) -> None:
         cutoff = now - WINDOW_SECONDS
         while self._events and self._events[0][0] <= cutoff:

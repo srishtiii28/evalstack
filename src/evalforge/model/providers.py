@@ -59,7 +59,9 @@ GROQ = ProviderConfig(
     base_url="https://api.groq.com/openai/v1",
     api_key_env="GROQ_API_KEY",
     default_model="llama-3.3-70b-versatile",
-    rate_limits=RateLimits(requests_per_minute=25, tokens_per_minute=90_000),
+    # Observed from Groq's own x-ratelimit headers on the free tier. The
+    # limiter tightens further if a response reports something lower.
+    rate_limits=RateLimits(requests_per_minute=25, tokens_per_minute=12_000),
 )
 
 PROVIDERS: dict[str, ProviderConfig] = {GROQ.name: GROQ}

@@ -42,7 +42,7 @@ from evalforge.model.budget import BudgetExceeded
 from evalforge.orchestrator.scheduler import FatalInfrastructureError, InfrastructureError
 
 DEFAULT_MAX_STEPS = 12
-DEFAULT_MAX_TOKENS = 2048
+DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
 
 DEFAULT_SYSTEM_PROMPT = """\

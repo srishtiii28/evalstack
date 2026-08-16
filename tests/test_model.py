@@ -589,3 +589,59 @@ async def test_a_genuine_bad_request_is_still_permanent() -> None:
         # Misreading this as the model misbehaving would hide a config error.
         with pytest.raises(PermanentModelError, match="does not exist"):
             await client.complete(make_request())
+
+
+# -- learning the allowance from the provider ----------------------------
+
+
+def test_the_limiter_tightens_to_a_reported_allowance() -> None:
+    limiter = RateLimiter(RateLimits(tokens_per_minute=90_000))
+
+    assert limiter.observe(tokens_per_minute=12_000) is True
+    assert limiter.limits.tokens_per_minute == 12_000
+
+
+def test_the_limiter_ignores_a_looser_reported_allowance() -> None:
+    """A header is evidence about a ceiling, not permission to raise ours."""
+    limiter = RateLimiter(RateLimits(tokens_per_minute=12_000))
+
+    assert limiter.observe(tokens_per_minute=90_000) is False
+    assert limiter.limits.tokens_per_minute == 12_000
+
+
+def test_nonsense_allowances_are_ignored() -> None:
+    limiter = RateLimiter(RateLimits(tokens_per_minute=12_000))
+
+    assert limiter.observe(tokens_per_minute=0) is False
+    assert limiter.observe(tokens_per_minute=None) is False
+
+
+async def test_rate_limit_headers_are_adopted_from_a_live_response() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-ratelimit-limit-tokens": "12000"},
+            json=chat_response(content="ok"),
+        )
+
+    limiter = RateLimiter(RateLimits(tokens_per_minute=90_000))
+    client, http = build_client(handler, rate_limiter=limiter)
+    async with http:
+        await client.complete(make_request())
+
+    # Guessing this number wrong is what made a healthy API look hung.
+    assert limiter.limits.tokens_per_minute == 12_000
+
+
+async def test_a_malformed_rate_limit_header_is_ignored() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"x-ratelimit-limit-tokens": "lots"}, json=chat_response(content="ok")
+        )
+
+    limiter = RateLimiter(RateLimits(tokens_per_minute=90_000))
+    client, http = build_client(handler, rate_limiter=limiter)
+    async with http:
+        await client.complete(make_request())
+
+    assert limiter.limits.tokens_per_minute == 90_000

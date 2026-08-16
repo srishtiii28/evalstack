@@ -97,10 +97,13 @@ The model layer speaks the chat-completions wire protocol directly, so it reache
 OpenRouter, GitHub Models or a local Ollama by changing a URL rather than a code path.
 
 ```bash
-export GROQ_API_KEY=...
+cp .env.example .env        # then paste your key in; .env is git-ignored
 evalforge run --dataset synth@v1 --agent model --max-model-tokens 200000
 evalforge run --dataset synth@v1 --agent model:llama-3.3-70b-versatile
 ```
+
+An exported `GROQ_API_KEY` always beats the file, so overriding it for a single
+run works as expected.
 
 Three things make this safe to point at a free tier. Requests are **paced proactively**
 against a per-minute allowance rather than firing concurrently and absorbing 429s, with

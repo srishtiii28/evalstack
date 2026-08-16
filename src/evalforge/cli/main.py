@@ -18,6 +18,7 @@ from evalforge.cli.render import (
     render_run_list,
     render_run_metrics,
 )
+from evalforge.config import load_env_file
 from evalforge.datasets.builder import (
     DEFAULT_COUNT,
     DEFAULT_NAME,
@@ -61,6 +62,16 @@ app.add_typer(dataset_app, name="dataset")
 def _fail(message: str, *, code: int = EXIT_USAGE_ERROR) -> typer.Exit:
     error_console.print(f"[red]error:[/red] {message}")
     return typer.Exit(code)
+
+
+@app.callback()
+def _bootstrap() -> None:
+    """Load local configuration before any command runs.
+
+    Variables already present in the environment win, so an explicit
+    ``GROQ_API_KEY=... evalforge run`` is never overridden by a stale file.
+    """
+    load_env_file()
 
 
 @app.command()

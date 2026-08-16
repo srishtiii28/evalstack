@@ -13,6 +13,9 @@ DEFAULT_DATABASE = STATE_DIR / "runs.db"
 DEFAULT_TRAJECTORY_DIR = STATE_DIR / "trajectories"
 DEFAULT_DATASETS_ROOT = Path("datasets")
 
+#: Local secrets, git-ignored. See .env.example for the shape.
+DEFAULT_ENV_FILE = Path(".env")
+
 #: Cached model responses. Keeping them under the state directory means a
 #: repeated run costs no quota, and deleting the directory forces fresh calls.
 DEFAULT_CACHE_DIR = STATE_DIR / "model-cache"

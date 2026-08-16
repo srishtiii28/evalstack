@@ -1,4 +1,9 @@
-# Evaluation state: run database and captured trajectories.
+# Secrets. Never commit these; .env.example documents the shape instead.
+.env
+.env.*
+!.env.example
+
+# Evaluation state: run database, captured trajectories, cached model responses.
 .evalforge/
 
 # Generated datasets are reproducible from `evalforge dataset build --seed N`.

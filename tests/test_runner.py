@@ -192,3 +192,39 @@ async def test_attempt_duration_is_measured() -> None:
     result = await backend.execute(Job(case=make_case()))
 
     assert result.duration_s > 0.0
+
+
+async def test_a_timed_out_attempt_still_leaves_its_trajectory(tmp_path: Path) -> None:
+    """A job timeout cancels the task, and CancelledError is a BaseException.
+
+    It slips past every ``except Exception``, so the earlier fix for keeping
+    traces on failure missed this path entirely — and a reaped attempt is
+    exactly the one whose trace you need in order to find out why.
+    """
+
+    class HangingAgent(Agent):
+        @property
+        def name(self) -> str:
+            return "test:hanging"
+
+        async def run(self, context: AgentContext) -> None:
+            context.recorder.task_started(prompt_hash=context.case.content_hash)
+            from evalforge.agent.tools import ToolBox
+
+            ToolBox(
+                case=context.case, workspace=context.workspace, recorder=context.recorder
+            ).list_files()
+            await asyncio.sleep(30)
+
+    traces = tmp_path / "traces"
+    backend = make_backend(HangingAgent, config=RunnerConfig(trajectory_dir=traces))
+
+    # wait_for cancels the inner task, then reports TimeoutError to the caller.
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(backend.execute(Job(case=make_case())), timeout=0.2)
+
+    written = list(traces.rglob("*.jsonl"))
+    assert written, "a reaped attempt left no trace to diagnose"
+    events = written[0].read_text(encoding="utf-8")
+    assert '"kind":"task_started"' in events
+    assert '"tool":"list_files"' in events

@@ -146,6 +146,13 @@ class LocalBackend:
                     raise InfrastructureError(
                         f"evaluator raised {type(exc).__name__}: {exc}"
                     ) from exc
+        except asyncio.CancelledError:
+            # A job timeout cancels this task, and CancelledError is a
+            # BaseException, so it slips past every `except Exception` above.
+            # Timed-out attempts are exactly the ones worth reading, so the
+            # trace is written before the cancellation continues on its way.
+            self._persist(recorder.build())
+            raise
         except OSError as exc:
             self._persist(recorder.build())
             raise InfrastructureError(f"workspace failure: {exc}") from exc

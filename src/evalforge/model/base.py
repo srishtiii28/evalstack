@@ -40,6 +40,20 @@ class PermanentModelError(ModelError):
     """A fault retrying cannot fix: bad credentials, an unknown model, a bad request."""
 
 
+class QuotaExhaustedError(PermanentModelError):
+    """A quota is spent and will not refill on any useful timescale.
+
+    Distinct from ordinary rate limiting. A per-minute limit clears in seconds
+    and is worth waiting out; a daily allowance is not, and sleeping on the
+    ``Retry-After`` it returns is indistinguishable from a hang — which is
+    exactly how a twenty-minute sleep once masqueraded as a deadlocked run.
+
+    Permanent, so the scheduler records it immediately instead of retrying:
+    every remaining case would fail the same way, and discovering that thirty
+    times over is not information.
+    """
+
+
 class ModelBehaviourError(ModelError):
     """The request was valid; the model's own generation was unusable.
 

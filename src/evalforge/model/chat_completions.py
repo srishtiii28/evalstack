@@ -35,6 +35,7 @@ from evalforge.model.base import (
     ModelRequest,
     ModelResponse,
     PermanentModelError,
+    QuotaExhaustedError,
     StopReason,
     ToolInvocation,
     ToolSpec,
@@ -49,6 +50,11 @@ DEFAULT_TIMEOUT_S = 120.0
 DEFAULT_MAX_RETRIES = 4
 DEFAULT_BACKOFF_S = 1.0
 MAX_BACKOFF_S = 30.0
+
+#: Longest ``Retry-After`` worth honouring. Beyond this the provider is telling
+#: you a quota is gone, not that you were briefly too quick, and waiting it out
+#: inside a request looks exactly like a hung process.
+MAX_RETRY_AFTER_S = 120.0
 
 #: Provider finish reasons, normalised. Anything unrecognised becomes "other"
 #: rather than being guessed at.
@@ -261,13 +267,17 @@ class ChatCompletionsClient:
 
                 detail = _error_detail(response)
                 if response.status_code in _RETRYABLE_STATUS:
+                    retry_after = _retry_after_seconds(response)
+                    if retry_after is not None and retry_after > MAX_RETRY_AFTER_S:
+                        raise QuotaExhaustedError(
+                            f"{self._base_url} asks for a {retry_after:.0f}s wait, which is a "
+                            f"spent quota rather than a moment's pacing: {detail}"
+                        )
                     last_error = TransientModelError(
                         f"HTTP {response.status_code} from {self._base_url}: {detail}"
                     )
                     if attempt < self._max_retries:
-                        await self._sleep(
-                            _retry_after_seconds(response) or _backoff_for(attempt)
-                        )
+                        await self._sleep(retry_after or _backoff_for(attempt))
                         continue
                 else:
                     generation = _failed_generation(response)

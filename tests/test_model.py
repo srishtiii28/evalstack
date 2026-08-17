@@ -18,6 +18,7 @@ from evalforge.model.base import (
     ModelRequest,
     ModelResponse,
     PermanentModelError,
+    QuotaExhaustedError,
     ToolSpec,
     TransientModelError,
     Usage,
@@ -645,3 +646,70 @@ async def test_a_malformed_rate_limit_header_is_ignored() -> None:
         await client.complete(make_request())
 
     assert limiter.limits.tokens_per_minute == 90_000
+
+
+# -- a spent quota is not a moment's pacing ------------------------------
+
+
+async def test_a_long_retry_after_is_a_spent_quota_not_a_wait() -> None:
+    """Sleeping 20 minutes inside a request is indistinguishable from a hang."""
+    slept: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        slept.append(delay)
+
+    body = {
+        "error": {
+            "message": (
+                "Rate limit reached on tokens per day (TPD): Limit 100000, Used 99566, "
+                "Requested 1804. Please try again in 19m43.68s."
+            )
+        }
+    }
+    client, http = build_client(
+        lambda _r: httpx.Response(429, headers={"retry-after": "1183"}, json=body),
+        sleep=record_sleep,
+    )
+    async with http:
+        with pytest.raises(QuotaExhaustedError, match="spent quota"):
+            await client.complete(make_request())
+
+    assert slept == [], "the client waited instead of surfacing an exhausted quota"
+
+
+async def test_a_short_retry_after_is_still_honoured() -> None:
+    """Per-minute pacing clears in seconds and is worth waiting out."""
+    delays: list[float] = []
+    attempts: list[int] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) == 1:
+            return httpx.Response(429, headers={"retry-after": "3"}, json={"error": "slow down"})
+        return httpx.Response(200, json=chat_response(content="ok"))
+
+    client, http = build_client(handler, sleep=record_sleep)
+    async with http:
+        response = await client.complete(make_request())
+
+    assert response.text == "ok"
+    assert delays == [3.0]
+
+
+async def test_an_exhausted_quota_is_permanent_so_the_scheduler_stops_retrying() -> None:
+    calls: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(429, headers={"retry-after": "900"}, json={"error": "TPD reached"})
+
+    client, http = build_client(handler, max_retries=4, sleep=no_sleep)
+    async with http:
+        with pytest.raises(PermanentModelError):
+            await client.complete(make_request())
+
+    # Rediscovering an empty quota thirty times over is not information.
+    assert len(calls) == 1

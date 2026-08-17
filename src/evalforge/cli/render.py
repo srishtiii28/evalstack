@@ -4,6 +4,7 @@ from rich.console import Console
 from rich.table import Table
 
 from evalforge.hashing import short
+from evalforge.judge_eval.validation import ValidationReport
 from evalforge.regression.compare import ComparisonReport
 from evalforge.schema.result import CaseResult, RunResult
 from evalforge.stats.sampling import max_usable_k, stability_report
@@ -217,3 +218,57 @@ def render_comparison(console: Console, report: ComparisonReport) -> None:
             )
         console.print()
         console.print(table)
+
+
+def render_judge_validation(console: Console, report: ValidationReport) -> None:
+    """Show what a judge is worth, leading with the number that matters."""
+    for warning in report.warnings:
+        console.print(f"[yellow]warning:[/yellow] {warning}")
+    if report.warnings:
+        console.print()
+
+    style = "green" if report.passed else "red"
+    console.print(f"verdict: [{style}]{report.summary}[/{style}]")
+
+    summary = Table(show_header=False, box=None, pad_edge=False)
+    summary.add_column(style="dim")
+    summary.add_column(justify="right")
+    summary.add_row("judge", report.judge.describe())
+    summary.add_row("gold set", f"{report.gold_name}@{report.gold_version}")
+    summary.add_row("labels", str(report.agreement.count))
+    # Accuracy is shown second and deliberately: on an imbalanced set a high
+    # accuracy with a low kappa is the signature of a judge that learned the
+    # majority class and nothing else.
+    summary.add_row("accuracy", f"{report.agreement.accuracy:.1%}")
+    summary.add_row("cohen's kappa", f"{report.agreement.kappa:.3f}")
+    summary.add_row("threshold", f"{report.threshold:.2f}")
+    console.print(summary)
+
+    table = Table(title="per class", title_justify="left", box=None, pad_edge=False)
+    table.add_column("label", style="dim", overflow="fold")
+    table.add_column("precision", justify="right")
+    table.add_column("recall", justify="right")
+    table.add_column("f1", justify="right")
+    table.add_column("support", justify="right")
+    for metrics in report.agreement.per_class:
+        table.add_row(
+            metrics.label,
+            f"{metrics.precision:.2f}",
+            f"{metrics.recall:.2f}",
+            f"{metrics.f1:.2f}",
+            str(metrics.support),
+        )
+    console.print()
+    console.print(table)
+
+    if report.position is not None:
+        console.print(
+            f"\n[dim]position bias:[/dim] {report.position.consistency:.0%} consistent "
+            f"across swapped orderings (skew {report.position.positional_skew:+.2f})"
+        )
+    if report.preference is not None and report.preference.comparable:
+        console.print(
+            f"[dim]self-preference:[/dim] {report.preference.own_rate:.0%} favourable to its "
+            f"own family vs {report.preference.other_rate:.0%} to others "
+            f"({report.preference.gap:+.0%})"
+        )

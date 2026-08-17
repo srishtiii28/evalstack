@@ -16,6 +16,7 @@ from evalforge.agent.tools import TOOL_SURFACES, WHOLE_FILE_SURFACE
 from evalforge.cli.render import (
     render_case_results,
     render_comparison,
+    render_judge_validation,
     render_run_header,
     render_run_list,
     render_run_metrics,
@@ -32,8 +33,16 @@ from evalforge.datasets.builder import (
 from evalforge.datasets.io import CASES_FILENAME, verify_dataset, write_dataset
 from evalforge.datasets.registry import DatasetNotFoundError, resolve_dataset
 from evalforge.env.limits import probe_limit_support
+from evalforge.evaluators.llm_judge import DEFAULT_JUDGE_PROMPT
 from evalforge.evaluators.registry import suite_names
 from evalforge.hashing import short
+from evalforge.judge_eval.gold import GoldSet
+from evalforge.judge_eval.validation import (
+    DEFAULT_KAPPA_THRESHOLD,
+    JudgeIdentity,
+    ValidationReport,
+    validate_judge,
+)
 from evalforge.model.budget import BudgetGuard, BudgetLimits
 from evalforge.model.providers import GROQ, ProviderNotConfiguredError
 from evalforge.orchestrator.scheduler import DEFAULT_JOB_TIMEOUT_S
@@ -62,6 +71,8 @@ app = typer.Typer(
 )
 dataset_app = typer.Typer(no_args_is_help=True, help="Build and verify evaluation datasets.")
 app.add_typer(dataset_app, name="dataset")
+judge_app = typer.Typer(no_args_is_help=True, help="Measure a judge before trusting it.")
+app.add_typer(judge_app, name="judge")
 
 
 def _fail(message: str, *, code: int = EXIT_USAGE_ERROR) -> typer.Exit:
@@ -387,6 +398,82 @@ def compare_command(
 
     if fail_on_regression and report.verdict == "regression":
         raise typer.Exit(EXIT_CHECK_FAILED)
+
+
+@judge_app.command("validate")
+def judge_validate(
+    gold: Annotated[Path, typer.Option("--gold", help="Human-labelled gold set (JSONL).")],
+    verdicts: Annotated[
+        Path,
+        typer.Option("--verdicts", help="File of the judge's verdicts, one per line."),
+    ],
+    judge_model: Annotated[
+        str, typer.Option("--judge-model", help="Which judge produced them.")
+    ] = "unrecorded",
+    threshold: Annotated[
+        float, typer.Option("--threshold", help="Minimum acceptable Cohen's kappa.")
+    ] = DEFAULT_KAPPA_THRESHOLD,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit JSON instead of tables.")] = False,
+) -> None:
+    """Score a judge against human labels, and fail if it is not good enough.
+
+    Verdicts are supplied rather than generated so the check runs offline and
+    for free: the judge is the expensive part, and re-running it is not needed
+    to re-measure agreement.
+    """
+    try:
+        gold_set = GoldSet.read(gold)
+        lines = [
+            line.strip()
+            for line in verdicts.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (FileNotFoundError, ValueError) as exc:
+        raise _fail(str(exc)) from exc
+
+    try:
+        report = validate_judge(
+            gold_set,
+            lines,
+            judge=JudgeIdentity(model=judge_model, prompt=DEFAULT_JUDGE_PROMPT),
+            threshold=threshold,
+        )
+    except ValueError as exc:
+        raise _fail(str(exc)) from exc
+
+    if as_json:
+        console.print_json(json.dumps(_judge_payload(report)))
+    else:
+        render_judge_validation(console, report)
+
+    if not report.passed:
+        raise typer.Exit(EXIT_CHECK_FAILED)
+
+
+def _judge_payload(report: ValidationReport) -> dict[str, object]:
+    return {
+        "judge": report.judge.describe(),
+        "judge_fingerprint": report.judge.fingerprint,
+        "gold": f"{report.gold_name}@{report.gold_version}",
+        "gold_hash": report.gold_hash,
+        "labels": report.agreement.count,
+        "accuracy": report.agreement.accuracy,
+        "kappa": report.agreement.kappa,
+        "interpretation": report.agreement.interpretation,
+        "threshold": report.threshold,
+        "passed": report.passed,
+        "warnings": list(report.warnings),
+        "per_class": [
+            {
+                "label": m.label,
+                "precision": m.precision,
+                "recall": m.recall,
+                "f1": m.f1,
+                "support": m.support,
+            }
+            for m in report.agreement.per_class
+        ],
+    }
 
 
 @app.command("trajectory")

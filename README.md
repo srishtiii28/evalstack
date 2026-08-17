@@ -68,7 +68,9 @@ lint, strict types, the full test suite and its own acceptance run before the ne
 - **M3 — statistics** ✅ Wilson intervals, paired bootstrap, McNemar's exact test,
   power analysis, pass@k vs pass^k, and `evalforge compare` with a verdict rather than
   a delta.
-- M4 — LLM judge and judge validation
+- **M4 — judge validation** ✅ Cohen's κ against human labels, per-class precision and
+  recall, position-bias and self-preference probes, judge fingerprinting, and
+  `evalforge judge validate` as a build gate.
 - M5 — API and dashboard with trajectory viewer
 - M6 — failure clustering, cost-aware selection, CI eval gate
 
@@ -150,6 +152,29 @@ underpowered: detecting a 10.0% difference needs about 234 cases; this run compa
 
 That distinction matters. "No significant change" and "this dataset is too small to
 tell" are different findings, and conflating them is how teams end up shipping on noise.
+
+### Validating the judge
+
+An LLM judge is itself a model that can be wrong, so it is measured before it is
+trusted. Raw accuracy is the trap: if most attempts fail, a judge that answers "fail"
+every time scores well and has learned nothing. Cohen's κ corrects for exactly that.
+
+```bash
+evalforge judge validate --gold datasets/gold/judgments.jsonl \
+                         --verdicts verdicts.txt --threshold 0.6
+```
+
+```
+verdict: not usable: kappa 0.000 (none or worse than chance) against 12 labels
+accuracy                                        58.3%
+cohen's kappa                                   0.000
+```
+
+That judge agrees with the humans 58% of the time and is worthless; the command exits
+non-zero so it cannot reach a build. Validation runs offline from recorded verdicts —
+re-running the judge is not needed to re-measure agreement — and the judge's model,
+prompt hash and temperature are fingerprinted, so comparing κ across a changed prompt
+reports *why* the two numbers are not comparable instead of quietly contrasting them.
 
 ## Development
 

@@ -71,7 +71,8 @@ lint, strict types, the full test suite and its own acceptance run before the ne
 - **M4 — judge validation** ✅ Cohen's κ against human labels, per-class precision and
   recall, position-bias and self-preference probes, judge fingerprinting, and
   `evalforge judge validate` as a build gate.
-- M5 — API and dashboard with trajectory viewer
+- **M5 — API and dashboard** ✅ read-only FastAPI over the store, plus a single-page
+  dashboard with run detail, a comparison view and a trajectory viewer. No build step.
 - M6 — failure clustering, cost-aware selection, CI eval gate
 
 ## Quick start
@@ -175,6 +176,18 @@ non-zero so it cannot reach a build. Validation runs offline from recorded verdi
 re-running the judge is not needed to re-measure agreement — and the judge's model,
 prompt hash and temperature are fingerprinted, so comparing κ across a changed prompt
 reports *why* the two numbers are not comparable instead of quietly contrasting them.
+
+### The dashboard
+
+```bash
+evalforge serve --db .evalforge/runs.db     # http://127.0.0.1:8000
+```
+
+Run list → run detail with metric tiles → click any case to see the agent's trajectory as
+an expandable timeline, and a comparison view that shows the verdict, the confidence
+interval and which cases moved. One static page, no bundler, no framework; it binds to
+localhost because the API has no authentication and exposing it should be a decision
+rather than an accident.
 
 ## Development
 

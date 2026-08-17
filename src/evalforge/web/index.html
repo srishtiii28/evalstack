@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvalForge</title>
+<style>
+  :root {
+    --paper: #F6F7F5; --surface: #FFF; --sunk: #ECEFEC;
+    --ink: #14191B; --muted: #56635F; --faint: #808C87;
+    --rule: #D9E0DB; --accent: #0F6E63; --accent-soft: #DCEAE6;
+    --good: #1B7A45; --bad: #A32C22; --warn: #8A5A08;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0E1315; --surface: #161D1F; --sunk: #1C2426;
+      --ink: #E5EBE8; --muted: #9BAAA5; --faint: #74837E;
+      --rule: #27312F; --accent: #52C3B1; --accent-soft: #16302E;
+      --good: #5FBE86; --bad: #E0796C; --warn: #D7A65B;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); font-size: 15px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 20px 28px; border-bottom: 1px solid var(--rule); background: var(--surface);
+  }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
+  header .sub { color: var(--faint); font-size: 13px; }
+  nav { margin-left: auto; display: flex; gap: 6px; }
+  button, select {
+    font: inherit; font-size: 13px; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 6px; padding: 5px 11px; cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--accent); }
+  button[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  main { padding: 24px 28px 80px; max-width: 1180px; }
+  h2 { font-size: 15px; margin: 0 0 12px; letter-spacing: -.005em; }
+  .muted { color: var(--muted); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .tile { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; }
+  .tile .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+  .tile .value { font-size: 21px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 500; padding: 7px 14px 7px 0; border-bottom: 1px solid var(--rule); }
+  td { padding: 8px 14px 8px 0; border-bottom: 1px solid var(--rule); }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--sunk); }
+  .pass { color: var(--good); } .fail { color: var(--bad); } .warnc { color: var(--warn); }
+  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+  .banner { border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; border: 1px solid var(--rule); background: var(--surface); }
+  .banner.bad { border-color: var(--bad); } .banner.good { border-color: var(--good); }
+  .verdict { font-size: 17px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+
+  /* Trajectory timeline */
+  .timeline { border-left: 2px solid var(--rule); margin-left: 8px; padding-left: 0; }
+  .ev { position: relative; padding: 0 0 2px 22px; }
+  .ev::before {
+    content: ""; position: absolute; left: -6px; top: 12px;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--rule); border: 2px solid var(--paper);
+  }
+  .ev.k-tool_call::before, .ev.k-file_edit::before { background: var(--accent); }
+  .ev.k-safety_violation::before, .ev.k-agent_error::before { background: var(--bad); }
+  .ev.k-submission::before { background: var(--good); }
+  .ev summary {
+    cursor: pointer; list-style: none; padding: 7px 0;
+    display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  }
+  .ev summary::-webkit-details-marker { display: none; }
+  .kind { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 3px; background: var(--sunk); color: var(--muted); }
+  .ev.k-safety_violation .kind, .ev.k-agent_error .kind { background: var(--bad); color: #fff; }
+  .at { font-family: var(--mono); font-size: 11px; color: var(--faint); min-width: 52px; }
+  .headline { font-size: 13.5px; }
+  .ev pre {
+    margin: 0 0 10px; padding: 10px 12px; background: var(--sunk); border-radius: 6px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.45;
+    white-space: pre-wrap; word-break: break-word; max-height: 340px; overflow: auto;
+  }
+  .empty { color: var(--faint); padding: 28px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>EvalForge</h1>
+  <span class="sub" id="subtitle">loading…</span>
+  <nav>
+    <button id="nav-runs" onclick="showRuns()">Runs</button>
+    <button id="nav-compare" onclick="showCompare()">Compare</button>
+  </nav>
+</header>
+<main id="view"><p class="empty">Loading…</p></main>
+
+<script>
+const view = document.getElementById("view");
+const subtitle = document.getElementById("subtitle");
+let runsCache = [];
+
+const pct = (x) => (x * 100).toFixed(1) + "%";
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function api(path) {
+  const response = await fetch(path);
+  if (!response.ok) {
+    let detail = response.statusText;
+    try { detail = (await response.json()).detail ?? detail; } catch {}
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+function fail(err) {
+  view.innerHTML = `<div class="banner bad">Could not load: ${esc(err.message)}</div>`;
+}
+
+function setNav(active) {
+  for (const id of ["runs", "compare"]) {
+    document.getElementById("nav-" + id).setAttribute("aria-current", String(id === active));
+  }
+}
+
+// -- runs list -----------------------------------------------------------
+
+async function showRuns() {
+  setNav("runs");
+  try {
+    runsCache = await api("/api/runs?limit=50");
+  } catch (err) { return fail(err); }
+
+  subtitle.textContent = `${runsCache.length} run${runsCache.length === 1 ? "" : "s"} recorded`;
+  if (!runsCache.length) {
+    view.innerHTML = `<p class="empty">No runs yet. Try <code>evalforge run</code>.</p>`;
+    return;
+  }
+  view.innerHTML = `<h2>Runs</h2><div class="wrap"><table>
+    <thead><tr><th>Run</th><th>When</th><th>Agent</th><th>Dataset</th><th>Suite</th>
+    <th>Passed</th><th>Rate</th><th>Cost</th></tr></thead><tbody>${
+      runsCache.map((r) => `<tr class="clickable" onclick="showRun('${esc(r.run_id)}')">
+        <td class="mono">${esc(r.run_id)}</td>
+        <td>${new Date(r.created_at).toLocaleString()}</td>
+        <td>${esc(r.agent_ref)}</td><td>${esc(r.dataset_ref)}</td><td>${esc(r.suite_name)}</td>
+        <td>${r.passed}/${r.completed}</td>
+        <td class="${r.success_rate >= 0.5 ? "pass" : "fail"}">${pct(r.success_rate)}</td>
+        <td>$${r.total_cost_usd.toFixed(4)}</td></tr>`).join("")
+    }</tbody></table></div>`;
+}
+
+// -- one run -------------------------------------------------------------
+
+async function showRun(runId) {
+  setNav("runs");
+  let run;
+  try { run = await api(`/api/runs/${encodeURIComponent(runId)}`); }
+  catch (err) { return fail(err); }
+
+  const done = run.case_results.filter((c) => c.status === "completed");
+  const passed = done.filter((c) => c.passed).length;
+  const tokens = run.case_results.reduce((n, c) => n + c.input_tokens + c.output_tokens, 0);
+  const names = [...new Set(run.case_results.flatMap((c) => c.evaluators.map((e) => e.name)))];
+
+  const means = names.map((name) => {
+    const scores = done.flatMap((c) => c.evaluators.filter((e) => e.name === name).map((e) => e.score));
+    const mean = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+    return `<div class="tile"><div class="label">${esc(name)}</div><div class="value">${mean.toFixed(3)}</div></div>`;
+  }).join("");
+
+  subtitle.textContent = run.agent_ref + " · " + run.dataset_name + "@" + run.dataset_version;
+  view.innerHTML = `
+    <div class="row"><button onclick="showRuns()">← All runs</button>
+      <span class="mono muted">${esc(run.run_id)}</span></div>
+    <div class="tiles">
+      <div class="tile"><div class="label">Success rate</div><div class="value">${
+        done.length ? pct(passed / done.length) : "—"}</div></div>
+      <div class="tile"><div class="label">Passed</div><div class="value">${passed}/${done.length}</div></div>
+      <div class="tile"><div class="label">Attempts</div><div class="value">${run.case_results.length}</div></div>
+      <div class="tile"><div class="label">Tokens</div><div class="value">${tokens.toLocaleString()}</div></div>
+      ${means}
+    </div>
+    <h2>Cases <span class="muted" style="font-weight:400">— click one to see what the agent did</span></h2>
+    <div class="wrap"><table>
+      <thead><tr><th>Case</th><th>Try</th><th>Status</th><th>Verdict</th>${
+        names.map((n) => `<th>${esc(n)}</th>`).join("")}<th>Seconds</th></tr></thead>
+      <tbody>${run.case_results.map((c) => {
+        const byName = Object.fromEntries(c.evaluators.map((e) => [e.name, e.score]));
+        return `<tr class="clickable" onclick="showTrajectory('${esc(run.run_id)}','${esc(c.case_id)}',${c.attempt})">
+          <td class="mono">${esc(c.case_id)}</td><td>${c.attempt}</td>
+          <td class="${c.status === "completed" ? "muted" : "warnc"}">${esc(c.status)}</td>
+          <td class="${c.passed ? "pass" : "fail"}">${c.passed ? "pass" : "fail"}</td>
+          ${names.map((n) => `<td>${n in byName ? byName[n].toFixed(2) : "—"}</td>`).join("")}
+          <td>${c.duration_s.toFixed(2)}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
+}
+
+// -- trajectory viewer ---------------------------------------------------
+
+function headline(e) {
+  switch (e.kind) {
+    case "task_started": return "attempt started";
+    case "model_call":
+      return `${esc(e.model)} · ${e.input_tokens}→${e.output_tokens} tokens · ${e.latency_ms.toFixed(0)}ms${e.cached ? " · cached" : ""}`;
+    case "tool_call": return esc(e.tool) + "(" + Object.keys(e.args).join(", ") + ")";
+    case "tool_result": return esc(e.tool) + (e.ok ? " ok" : " failed");
+    case "file_edit": return `${esc(e.path)} +${e.lines_added}/-${e.lines_removed}`;
+    case "command_run": return esc(e.argv.join(" ")) + (e.timed_out ? " · timed out" : ` · exit ${e.exit_code}`);
+    case "safety_violation": return `${esc(e.rule)}: ${esc(e.attempted)}`;
+    case "agent_error": return `${esc(e.error_type)}: ${esc(e.message)}`;
+    case "submission": return esc(e.summary) || "submitted";
+    default: return "";
+  }
+}
+
+function body(e) {
+  switch (e.kind) {
+    case "tool_call": return JSON.stringify(e.args, null, 2);
+    case "tool_result": return e.error ? "error: " + e.error : e.output;
+    case "command_run": return [e.stdout_tail, e.stderr_tail].filter(Boolean).join("\n---\n");
+    case "safety_violation": return e.detail;
+    case "agent_error": return e.message;
+    default: return "";
+  }
+}
+
+async function showTrajectory(runId, caseId, attempt) {
+  setNav("runs");
+  let data;
+  try {
+    data = await api(`/api/runs/${encodeURIComponent(runId)}/trajectory/${encodeURIComponent(caseId)}?attempt=${attempt}`);
+  } catch (err) {
+    view.innerHTML = `<div class="row"><button onclick="showRun('${esc(runId)}')">← Back to run</button></div>
+      <div class="banner bad">${esc(err.message)}</div>`;
+    return;
+  }
+
+  subtitle.textContent = `${caseId} · attempt ${attempt}`;
+  view.innerHTML = `
+    <div class="row"><button onclick="showRun('${esc(runId)}')">← Back to run</button>
+      <span class="mono muted">${esc(caseId)} #${attempt} · ${data.events.length} events</span></div>
+    <div class="timeline">${data.events.map((e) => {
+      const text = body(e);
+      const at = (e.t_ms / 1000).toFixed(1) + "s";
+      return `<details class="ev k-${esc(e.kind)}"${text ? "" : " open"}>
+        <summary><span class="at">${at}</span><span class="kind">${esc(e.kind)}</span>
+        <span class="headline">${headline(e)}</span></summary>
+        ${text ? `<pre>${esc(text)}</pre>` : ""}</details>`;
+    }).join("")}</div>`;
+}
+
+// -- compare -------------------------------------------------------------
+
+async function showCompare() {
+  setNav("compare");
+  if (!runsCache.length) {
+    try { runsCache = await api("/api/runs?limit=50"); } catch (err) { return fail(err); }
+  }
+  if (runsCache.length < 2) {
+    view.innerHTML = `<p class="empty">Two runs are needed to compare.</p>`;
+    return;
+  }
+  const options = (selected) => runsCache.map((r, i) =>
+    `<option value="${esc(r.run_id)}"${i === selected ? " selected" : ""}>${esc(r.run_id)} — ${esc(r.agent_ref)}</option>`).join("");
+
+  view.innerHTML = `<h2>Compare</h2>
+    <div class="row">
+      <label>Baseline <select id="before">${options(1)}</select></label>
+      <label>Candidate <select id="after">${options(0)}</select></label>
+      <button onclick="runCompare()">Compare</button>
+    </div><div id="result"></div>`;
+  runCompare();
+}
+
+async function runCompare() {
+  const before = document.getElementById("before").value;
+  const after = document.getElementById("after").value;
+  const target = document.getElementById("result");
+  target.innerHTML = `<p class="empty">Comparing…</p>`;
+  let c;
+  try { c = await api(`/api/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`); }
+  catch (err) { target.innerHTML = `<div class="banner bad">${esc(err.message)}</div>`; return; }
+
+  const cls = c.verdict === "regression" ? "bad" : c.verdict === "improvement" ? "good" : "";
+  const moved = c.transitions.filter((t) => t.kind === "broken" || t.kind === "fixed");
+
+  target.innerHTML = `
+    ${c.warnings.map((w) => `<div class="banner">${esc(w)}</div>`).join("")}
+    <div class="banner ${cls}"><div class="verdict">${esc(c.verdict)}</div>
+      <div class="muted">${pct(c.before_rate)} → ${pct(c.after_rate)}
+      · difference ${(c.delta * 100).toFixed(1)}% [${(c.interval_low * 100).toFixed(1)},
+      ${(c.interval_high * 100).toFixed(1)}] · p = ${c.p_value.toFixed(4)}
+      · ${c.shared_cases} shared cases</div>
+      ${c.underpowered ? `<div class="warnc" style="margin-top:6px">Underpowered: detecting a
+        ${Math.abs(c.delta * 100).toFixed(1)}% difference needs about ${c.required_cases} cases.</div>` : ""}
+    </div>
+    ${moved.length ? `<h2>Cases that moved</h2><div class="wrap"><table>
+      <thead><tr><th>Case</th><th>Change</th></tr></thead><tbody>${
+        moved.map((t) => `<tr><td class="mono">${esc(t.case_id)}</td>
+          <td class="${t.kind === "fixed" ? "pass" : "fail"}">${esc(t.kind)}</td></tr>`).join("")
+      }</tbody></table></div>` : ""}
+    <h2>Dimensions</h2><div class="wrap"><table>
+      <thead><tr><th>Evaluator</th><th>Before</th><th>After</th><th>Delta</th></tr></thead>
+      <tbody>${c.dimensions.map((d) => `<tr><td>${esc(d.name)}</td>
+        <td>${d.before.toFixed(3)}</td><td>${d.after.toFixed(3)}</td>
+        <td class="${d.delta > 0 ? "pass" : d.delta < 0 ? "fail" : "muted"}">${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+}
+
+showRuns();
+</script>
+</body>
+</html>

@@ -341,6 +341,26 @@ def show_command(
     render_case_results(console, result.case_results, limit=None if show_all else 40)
 
 
+@app.command("serve")
+def serve_command(
+    database: Annotated[Path, typer.Option("--db", help="Results database.")] = DEFAULT_DATABASE,
+    host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535, help="Port.")] = 8000,
+) -> None:
+    """Serve the dashboard and the read-only API.
+
+    Binds to localhost by default: the API exposes recorded runs and there is no
+    authentication, so making it reachable from the network should be a decision
+    rather than an accident.
+    """
+    import uvicorn
+
+    from evalforge.api.app import create_app
+
+    console.print(f"dashboard on [bold]http://{host}:{port}[/bold]  (reading {database})")
+    uvicorn.run(create_app(database=database), host=host, port=port, log_level="warning")
+
+
 @app.command("compare")
 def compare_command(
     before: Annotated[str, typer.Argument(help="Baseline run id.")],

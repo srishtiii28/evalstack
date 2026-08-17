@@ -17,7 +17,8 @@ from pathlib import Path
 from evalforge.agent.base import Agent
 from evalforge.agent.registry import resolve_agent
 from evalforge.env.workspace import ResourceLimits
-from evalforge.evaluators.registry import resolve_suite
+from evalforge.evaluators.base import Evaluator, EvaluatorSuite
+from evalforge.evaluators.registry import resolve_suite, with_judge
 from evalforge.orchestrator.runner import LocalBackend, RunnerConfig
 from evalforge.orchestrator.scheduler import (
     DEFAULT_CONCURRENCY,
@@ -31,6 +32,23 @@ from evalforge.schema.result import CaseResult, RunResult
 from evalforge.store.db import Store
 
 RUN_ID_ENTROPY_BYTES = 3
+
+
+class UnpersistedResults(Exception):
+    """The run finished but some results never reached the store.
+
+    Raised after the run rather than during it: losing one write should not cost
+    the other attempts, but the caller must not be left believing everything was
+    saved.
+
+    The completed run travels on the exception. Raising without it would throw
+    away the very results the containment was protecting.
+    """
+
+    def __init__(self, results: list[CaseResult], run: RunResult) -> None:
+        super().__init__(f"{len(results)} result(s) could not be written to the store")
+        self.results = results
+        self.run = run
 
 
 def new_run_id(*, now: datetime | None = None) -> str:
@@ -67,11 +85,16 @@ async def execute_run(
     store: Store | None = None,
     run_id: str | None = None,
     agent_factory: Callable[[], Agent] | None = None,
+    judge: Evaluator | None = None,
 ) -> RunResult:
     """Run every case (times ``samples_per_case``) and return the assembled result."""
     dataset = request.selected_dataset()
     build_agent = agent_factory or (lambda: resolve_agent(request.agent_ref))
-    suite = resolve_suite(request.suite_name)
+    suite: EvaluatorSuite = resolve_suite(request.suite_name)
+    if judge is not None:
+        # Changes the suite hash, so a judged run is never silently compared
+        # against an unjudged one.
+        suite = with_judge(suite, judge)
 
     # Built once purely to record the configuration hash; each attempt gets its own.
     probe_agent = build_agent()
@@ -121,4 +144,8 @@ async def execute_run(
     # in-memory run and the same run read back from the store agree — `run` and
     # `show` should not disagree about the order of the same results.
     ordered = tuple(sorted(results, key=lambda result: (result.case_id, result.attempt)))
-    return header.model_copy(update={"case_results": ordered})
+    assembled = header.model_copy(update={"case_results": ordered})
+
+    if scheduler.unpersisted:
+        raise UnpersistedResults(scheduler.unpersisted, assembled)
+    return assembled

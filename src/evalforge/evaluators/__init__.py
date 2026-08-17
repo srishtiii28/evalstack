@@ -20,6 +20,7 @@ from evalforge.evaluators.registry import (
     resolve_suite,
     strict_suite,
     suite_names,
+    with_judge,
 )
 from evalforge.evaluators.safety import SafetyEvaluator, SafetyPolicy
 from evalforge.evaluators.trajectory import (
@@ -53,4 +54,5 @@ __all__ = [
     "score_against_budget",
     "strict_suite",
     "suite_names",
+    "with_judge",
 ]

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from evalforge.hashing import HASH_PREFIX
 from evalforge.model.base import (
     ModelClient,
     ModelRequest,
@@ -31,6 +32,12 @@ from evalforge.model.base import (
 )
 
 SHARD_WIDTH = 2
+_HEX = frozenset("0123456789abcdef")
+
+
+class InvalidCacheKey(ValueError):
+    """A key that is not a content hash, and so cannot be turned into a path."""
+
 
 
 def _coerce_stop_reason(value: str) -> StopReason:
@@ -96,7 +103,16 @@ class ResponseCache:
         self.misses = 0
 
     def path_for(self, key: str) -> Path:
-        digest = key.removeprefix("sha256:")
+        """Map a content hash to a file, refusing anything that is not one.
+
+        Keys come from :meth:`ModelRequest.cache_key` and are always hex
+        digests, so this never fires in practice. It exists because a path built
+        by concatenating an unvalidated string is a file-write primitive waiting
+        for its first careless caller, and the check costs nothing.
+        """
+        digest = key.removeprefix(HASH_PREFIX)
+        if len(digest) < SHARD_WIDTH or not set(digest) <= _HEX:
+            raise InvalidCacheKey(f"not a content hash: {key!r}")
         return self.directory / digest[:SHARD_WIDTH] / f"{digest}.json"
 
     def get(self, key: str) -> ModelResponse | None:

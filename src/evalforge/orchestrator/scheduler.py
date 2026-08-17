@@ -116,6 +116,9 @@ class Scheduler:
         self._retry = retry or RetryPolicy()
         self._on_result = on_result
         self._sleep = sleep
+        #: Results the sink refused. The run continues and keeps them in memory,
+        #: but the caller needs to know they did not reach durable storage.
+        self.unpersisted: list[CaseResult] = []
 
     async def run(self, jobs: Iterable[Job]) -> tuple[CaseResult, ...]:
         """Execute every job, returning results in job order.
@@ -147,7 +150,13 @@ class Scheduler:
                     )
             results[index] = result
             if self._on_result is not None:
-                self._on_result(result)
+                try:
+                    self._on_result(result)
+                except Exception:
+                    # Persisting one result must not cost the other twenty-nine.
+                    # Same blast-radius rule as a failing evaluator: record the
+                    # casualty, finish the run, and surface it afterwards.
+                    self.unpersisted.append(result)
 
         tasks = [
             asyncio.create_task(worker(index, job), name=f"evalforge-job-{job.label}")

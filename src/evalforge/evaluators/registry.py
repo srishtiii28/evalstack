@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from evalforge.evaluators.base import EvaluatorSuite
+from evalforge.evaluators.base import Evaluator, EvaluatorSuite
 from evalforge.evaluators.efficiency import EfficiencyEvaluator
 from evalforge.evaluators.outcome import SuiteOutcomeEvaluator
 from evalforge.evaluators.patch import PatchLocalityEvaluator
@@ -69,6 +69,23 @@ SUITES: dict[str, Callable[[], EvaluatorSuite]] = {
     "strict": strict_suite,
     "outcome-only": outcome_only_suite,
 }
+
+
+def with_judge(suite: EvaluatorSuite, judge: Evaluator) -> EvaluatorSuite:
+    """Append a judge to an existing suite, without letting it gate.
+
+    Non-gating deliberately. A judge that has not been validated against human
+    labels should inform a decision, never make one — and even a validated judge
+    abstains sometimes, which would fail cases for a reason that has nothing to
+    do with the agent.
+    """
+    if any(evaluator.name == judge.name for evaluator in suite.evaluators):
+        raise ValueError(f"suite {suite.name!r} already has a {judge.name!r} evaluator")
+    return EvaluatorSuite(
+        name=f"{suite.name}+judge",
+        evaluators=(*suite.evaluators, judge),
+        gating=suite.gating,
+    )
 
 
 def resolve_suite(name: str) -> EvaluatorSuite:

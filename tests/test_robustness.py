@@ -207,3 +207,114 @@ class _NoopAgent:
 
     async def run(self, context) -> None:
         return None
+
+
+# -- audit findings ------------------------------------------------------
+
+
+async def test_a_failing_result_sink_does_not_destroy_the_run() -> None:
+    """Persisting one result must not cost the other twenty-nine.
+
+    ``on_result`` is the store write. A transient disk or lock error used to
+    escape the worker and take the whole gather down with it.
+    """
+    from evalforge.orchestrator.scheduler import Job, Scheduler
+
+    seen: list[CaseResult] = []
+
+    def flaky_sink(result: CaseResult) -> None:
+        seen.append(result)
+        if len(seen) == 2:
+            raise OSError("disk full")
+
+    class OkBackend:
+        async def execute(self, job: Job) -> CaseResult:
+            return CaseResult(
+                case_id=job.case.case_id, attempt=job.attempt,
+                status="completed", passed=True, duration_s=0.1,
+            )
+
+    jobs = [Job(case=make_case(f"c{index}")) for index in range(6)]
+    scheduler = Scheduler(OkBackend(), on_result=flaky_sink)
+
+    results = await scheduler.run(jobs)
+
+    assert len(results) == 6
+    # The casualty is recorded rather than swallowed.
+    assert len(scheduler.unpersisted) == 1
+
+
+async def test_unpersisted_results_are_reported_with_the_run_intact() -> None:
+    """Raising without the run would discard what the containment protected."""
+    from evalforge.datasets.builder import build_synthetic_dataset
+    from evalforge.pipeline import RunRequest, UnpersistedResults, execute_run
+
+    class BrokenStore:
+        def start_run(self, run: object) -> None:
+            return None
+
+        def record_case_result(self, run_id: str, result: CaseResult) -> None:
+            raise OSError("the database went away")
+
+    dataset = build_synthetic_dataset(count=2, seed=7)
+
+    with pytest.raises(UnpersistedResults) as caught:
+        await execute_run(
+            RunRequest(dataset=dataset, agent_ref="scripted:idle"),
+            store=BrokenStore(),  # type: ignore[arg-type]
+        )
+
+    assert len(caught.value.results) == 2
+    assert len(caught.value.run.case_results) == 2
+    assert caught.value.run.run_id
+
+
+def test_the_cache_refuses_a_key_that_is_not_a_content_hash(tmp_path: Path) -> None:
+    """A path built from an unvalidated key is a file-write primitive."""
+    from evalforge.model.cache import InvalidCacheKey, ResponseCache
+
+    cache = ResponseCache(tmp_path)
+
+    with pytest.raises(InvalidCacheKey):
+        cache.path_for("../../../../tmp/escape")
+    with pytest.raises(InvalidCacheKey):
+        cache.path_for("sha256:not-hex-at-all")
+
+    good = cache.path_for("sha256:" + "ab" * 32)
+    assert tmp_path.resolve() in good.resolve().parents
+
+
+def test_a_judge_can_be_attached_to_a_suite_without_gating_on_it() -> None:
+    from evalforge.evaluators.llm_judge import LLMJudgeEvaluator
+    from evalforge.evaluators.registry import default_suite, with_judge
+
+    class Stub:
+        model = "judge"
+
+        async def complete(self, request: object) -> object:
+            raise AssertionError("not called")
+
+    base = default_suite()
+    judged = with_judge(base, LLMJudgeEvaluator(Stub()))  # type: ignore[arg-type]
+
+    assert "llm_judge" in [e.name for e in judged.evaluators]
+    # An unvalidated judge informs a decision; it must not make one.
+    assert judged.gating == base.gating
+    # And the suite hash changes, so judged and unjudged runs are not confused.
+    assert judged.content_hash != base.content_hash
+
+
+def test_a_judge_cannot_be_attached_twice() -> None:
+    from evalforge.evaluators.llm_judge import LLMJudgeEvaluator
+    from evalforge.evaluators.registry import default_suite, with_judge
+
+    class Stub:
+        model = "judge"
+
+        async def complete(self, request: object) -> object:
+            raise AssertionError("not called")
+
+    once = with_judge(default_suite(), LLMJudgeEvaluator(Stub()))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="already has"):
+        with_judge(once, LLMJudgeEvaluator(Stub()))  # type: ignore[arg-type]

@@ -2,9 +2,11 @@
 
 import asyncio
 import json
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 from rich.console import Console
 
@@ -33,7 +35,7 @@ from evalforge.datasets.builder import (
 from evalforge.datasets.io import CASES_FILENAME, verify_dataset, write_dataset
 from evalforge.datasets.registry import DatasetNotFoundError, resolve_dataset
 from evalforge.env.limits import probe_limit_support
-from evalforge.evaluators.llm_judge import DEFAULT_JUDGE_PROMPT
+from evalforge.evaluators.llm_judge import DEFAULT_JUDGE_PROMPT, LLMJudgeEvaluator
 from evalforge.evaluators.registry import suite_names
 from evalforge.hashing import short
 from evalforge.judge_eval.gold import GoldSet
@@ -44,7 +46,7 @@ from evalforge.judge_eval.validation import (
     validate_judge,
 )
 from evalforge.model.budget import BudgetGuard, BudgetLimits
-from evalforge.model.providers import GROQ, ProviderNotConfiguredError
+from evalforge.model.providers import GROQ, ProviderNotConfiguredError, build_model_client
 from evalforge.orchestrator.scheduler import DEFAULT_JOB_TIMEOUT_S
 from evalforge.paths import (
     DEFAULT_CACHE_DIR,
@@ -52,7 +54,7 @@ from evalforge.paths import (
     DEFAULT_DATASETS_ROOT,
     DEFAULT_TRAJECTORY_DIR,
 )
-from evalforge.pipeline import RunRequest, execute_run
+from evalforge.pipeline import RunRequest, UnpersistedResults, execute_run
 from evalforge.regression.compare import compare
 from evalforge.schema.result import RunResult
 from evalforge.stats.significance import DEFAULT_ALPHA
@@ -208,6 +210,10 @@ def run_command(
     job_timeout: Annotated[
         float, typer.Option("--job-timeout", min=1.0, help="Seconds before an attempt is reaped.")
     ] = DEFAULT_JOB_TIMEOUT_S,
+    judge: Annotated[
+        bool,
+        typer.Option("--judge", help="Also score each case with an LLM judge (non-gating)."),
+    ] = False,
     no_cache: Annotated[
         bool, typer.Option("--no-cache", help="Bypass the model response cache.")
     ] = False,
@@ -236,24 +242,37 @@ def run_command(
         notes=notes,
     )
 
+    spec: ModelAgentSpec | None = None
+    if agent.split(":", 1)[0] == MODEL_PREFIX:
+        spec = ModelAgentSpec.from_reference(
+            agent,
+            provider=provider,
+            settings=ModelAgentConfig(max_steps=max_steps, tool_surface=tools),
+            budget=BudgetLimits(max_calls=max_model_calls, max_tokens=max_model_tokens),
+            cache_dir=None if no_cache else DEFAULT_CACHE_DIR,
+        )
+
     guard: BudgetGuard | None = None
     try:
         with Store.open(database) as store:
-            if agent.split(":", 1)[0] == MODEL_PREFIX:
-                spec = ModelAgentSpec.from_reference(
-                    agent,
-                    provider=provider,
-                    settings=ModelAgentConfig(max_steps=max_steps, tool_surface=tools),
-                    budget=BudgetLimits(
-                        max_calls=max_model_calls, max_tokens=max_model_tokens
-                    ),
+            result, guard = asyncio.run(
+                _execute(
+                    request,
+                    store,
+                    spec=spec,
+                    judge_provider=provider if judge else None,
                     cache_dir=None if no_cache else DEFAULT_CACHE_DIR,
                 )
-                result, guard = asyncio.run(_run_with_model(request, spec, store))
-            else:
-                result = asyncio.run(execute_run(request, store=store))
+            )
     except ProviderNotConfiguredError as exc:
         raise _fail(str(exc)) from exc
+    except UnpersistedResults as exc:
+        # The run finished; the store did not keep all of it. Say so loudly
+        # rather than rendering a report that looks complete.
+        error_console.print(
+            f"[red]warning:[/red] {exc}. The results below are in memory only."
+        )
+        result = exc.run
     except (KeyError, ValueError) as exc:
         raise _fail(str(exc)) from exc
 
@@ -270,12 +289,36 @@ def run_command(
     render_case_results(console, result.case_results, limit=None if show_all else 40)
 
 
-async def _run_with_model(
-    request: RunRequest, spec: ModelAgentSpec, store: Store
-) -> tuple[RunResult, BudgetGuard]:
-    """Run with a shared HTTP pool, rate limiter and budget across all attempts."""
-    async with model_agent_factory(spec) as (make_agent, guard):
-        result = await execute_run(request, store=store, agent_factory=make_agent)
+async def _execute(
+    request: RunRequest,
+    store: Store,
+    *,
+    spec: ModelAgentSpec | None,
+    judge_provider: str | None,
+    cache_dir: Path | None,
+) -> tuple[RunResult, BudgetGuard | None]:
+    """Run, opening only the model machinery the request actually needs.
+
+    A scripted agent with no judge touches no provider at all, which is what
+    keeps the default path free and offline.
+    """
+    async with AsyncExitStack() as stack:
+        make_agent = None
+        guard: BudgetGuard | None = None
+        if spec is not None:
+            make_agent, guard = await stack.enter_async_context(model_agent_factory(spec))
+
+        judge_evaluator = None
+        if judge_provider is not None:
+            http = await stack.enter_async_context(httpx.AsyncClient())
+            client, _ = build_model_client(
+                provider=judge_provider, http=http, cache_dir=cache_dir
+            )
+            judge_evaluator = LLMJudgeEvaluator(client)
+
+        result = await execute_run(
+            request, store=store, agent_factory=make_agent, judge=judge_evaluator
+        )
     return result, guard
 
 

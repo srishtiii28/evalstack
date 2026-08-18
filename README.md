@@ -73,7 +73,9 @@ lint, strict types, the full test suite and its own acceptance run before the ne
   `evalforge judge validate` as a build gate.
 - **M5 — API and dashboard** ✅ read-only FastAPI over the store, plus a single-page
   dashboard with run detail, a comparison view and a trajectory viewer. No build step.
-- M6 — failure clustering, cost-aware selection, CI eval gate
+- **M6 — clustering, selection, CI gate** ✅ deterministic failure clustering,
+  budget-constrained case selection, and an `evalforge gate` command wired into a
+  GitHub Actions workflow that costs nothing to run.
 
 ## Quick start
 
@@ -188,6 +190,29 @@ an expandable timeline, and a comparison view that shows the verdict, the confid
 interval and which cases moved. One static page, no bundler, no framework; it binds to
 localhost because the API has no authentication and exposing it should be a decision
 rather than an accident.
+
+### Making a regression actionable
+
+```bash
+evalforge cluster <run-id>     # group failures by shape
+evalforge select --budget 20   # the most informative cases per unit cost
+evalforge gate <run-id> --min-success 0.70 --max-unsafe 0
+```
+
+Clustering is deterministic and feature-based rather than embedding-based, so a cluster
+that grows between runs grew because behaviour changed — and because the dataset seeds
+known faults, cluster membership is checkable rather than eyeballed:
+
+```
+cluster                                   cases  dominant fault
+changed nothing                              14  integer_division
+edited the right file, tests still failing    8  missing_empty_case
+```
+
+`gate` judges a run it did not produce and exits non-zero on a breach, so CI can enforce
+a threshold without being able to change the numbers it is judging. The whole workflow
+uses the deterministic agents and never contacts a provider — it cannot be blocked by a
+rate limit or spend a token budget.
 
 ## Development
 

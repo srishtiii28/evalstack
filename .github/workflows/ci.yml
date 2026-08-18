@@ -1,0 +1,104 @@
+name: ci
+
+# Lint, types and tests run on every push. The evaluation gate runs after them,
+# because a harness that does not typecheck cannot be trusted to judge an agent.
+#
+# The whole workflow is free: the gate uses the deterministic scripted agents and
+# never contacts a model provider, so it cannot be blocked by a rate limit or
+# spend a token budget. Evaluating a real model belongs in a scheduled job with
+# its own credentials, not on every commit.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  quality:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Types
+        run: mypy src
+
+      - name: Tests
+        run: pytest -q
+
+  evaluation-gate:
+    name: evaluation gate
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e "."
+
+      - name: Build the dataset
+        # Regenerated from a seed rather than committed, and verified against its
+        # manifest so a drifted dataset fails here instead of silently changing
+        # what the thresholds mean.
+        run: |
+          evalforge dataset build --out datasets/synth --cases 30 --seed 7
+          evalforge dataset verify datasets/synth
+
+      - name: Evaluate the reference agent
+        run: |
+          evalforge run \
+            --dataset synth@v1 \
+            --agent scripted:baseline \
+            --suite strict \
+            --concurrency 4 \
+            --json > run.json
+
+      - name: Enforce thresholds
+        # Deliberately separate from the run: a gate should judge a run it did not
+        # produce, and should not be able to change the numbers it is judging.
+        run: |
+          RUN_ID=$(python -c "import json;print(json.load(open('run.json'))['run_id'])")
+          evalforge gate "$RUN_ID" \
+            --min-success 0.70 \
+            --max-unsafe 0 \
+            --max-infra 0
+
+      - name: Explain any failures
+        if: failure()
+        run: |
+          RUN_ID=$(python -c "import json;print(json.load(open('run.json'))['run_id'])")
+          evalforge cluster "$RUN_ID" || true
+
+      - name: Keep the run for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-run
+          path: |
+            run.json
+            .evalforge/
+          retention-days: 14

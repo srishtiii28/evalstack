@@ -9,6 +9,7 @@ from typing import Annotated
 import httpx
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from evalforge import __version__
 from evalforge.agent.build import MODEL_PREFIX, ModelAgentSpec, model_agent_factory
@@ -55,8 +56,10 @@ from evalforge.paths import (
     DEFAULT_TRAJECTORY_DIR,
 )
 from evalforge.pipeline import RunRequest, UnpersistedResults, execute_run
+from evalforge.regression.clustering import cluster_failures, overall_purity
 from evalforge.regression.compare import compare
 from evalforge.schema.result import RunResult
+from evalforge.selection.discriminative import select_from_runs
 from evalforge.stats.significance import DEFAULT_ALPHA
 from evalforge.store.db import Store
 
@@ -382,6 +385,145 @@ def show_command(
     render_run_metrics(console, result)
     console.print()
     render_case_results(console, result.case_results, limit=None if show_all else 40)
+
+
+@app.command("gate")
+def gate_command(
+    run_id: Annotated[str, typer.Argument(help="Run to check.")],
+    database: Annotated[Path, typer.Option("--db", help="Results database.")] = DEFAULT_DATABASE,
+    min_success: Annotated[
+        float, typer.Option("--min-success", min=0.0, max=1.0, help="Required success rate.")
+    ] = 0.0,
+    max_unsafe: Annotated[
+        int, typer.Option("--max-unsafe", min=0, help="Attempts allowed to fail safety.")
+    ] = 0,
+    max_infra: Annotated[
+        int, typer.Option("--max-infra", min=0, help="Attempts allowed to end in a harness fault.")
+    ] = 0,
+) -> None:
+    """Check a recorded run against thresholds; exit non-zero if it falls short.
+
+    Separate from ``run`` on purpose: a deployment gate should be able to judge a
+    run somebody else produced, and should not be able to change the numbers it
+    is judging.
+    """
+    with Store.open(database) as store:
+        try:
+            run = store.load_run(run_id)
+        except KeyError as exc:
+            raise _fail(str(exc)) from exc
+
+    completed = run.completed_results
+    unsafe = sum(
+        1
+        for result in completed
+        if (found := result.evaluator("safety")) is not None and not found.passed
+    )
+    infra = sum(1 for result in run.case_results if result.status != "completed")
+
+    checks = [
+        ("success rate", f"{run.success_rate:.1%}", f">= {min_success:.1%}",
+         run.success_rate >= min_success),
+        ("safety failures", str(unsafe), f"<= {max_unsafe}", unsafe <= max_unsafe),
+        ("harness faults", str(infra), f"<= {max_infra}", infra <= max_infra),
+    ]
+
+    table = Table(show_header=True, box=None, pad_edge=False)
+    table.add_column("check", style="dim")
+    table.add_column("actual", justify="right")
+    table.add_column("required", justify="right")
+    table.add_column("")
+    for name, actual, required, ok in checks:
+        table.add_row(name, actual, required, "[green]ok[/green]" if ok else "[red]fail[/red]")
+    console.print(table)
+
+    if not completed:
+        raise _fail("the run has no completed attempts to judge", code=EXIT_CHECK_FAILED)
+    if not all(ok for *_, ok in checks):
+        error_console.print("[red]gate failed[/red]")
+        raise typer.Exit(EXIT_CHECK_FAILED)
+    console.print("[green]gate passed[/green]")
+
+
+@app.command("cluster")
+def cluster_command(
+    run_id: Annotated[str, typer.Argument(help="Run to analyse.")],
+    dataset: Annotated[
+        str, typer.Option("--dataset", help="Dataset the run used, for bug-kind labels.")
+    ] = f"{DEFAULT_NAME}@{DEFAULT_VERSION}",
+    datasets_root: Annotated[
+        Path, typer.Option("--datasets-root", help="Where name@version refs are looked up.")
+    ] = DEFAULT_DATASETS_ROOT,
+    database: Annotated[Path, typer.Option("--db", help="Results database.")] = DEFAULT_DATABASE,
+) -> None:
+    """Group a run's failures by shape, so a regression points somewhere."""
+    with Store.open(database) as store:
+        try:
+            run = store.load_run(run_id)
+        except KeyError as exc:
+            raise _fail(str(exc)) from exc
+
+    bug_kinds: dict[str, str] = {}
+    try:
+        loaded = resolve_dataset(dataset, root=datasets_root)
+        bug_kinds = {
+            case.case_id: case.metadata.bug_kind
+            for case in loaded.cases
+            if case.metadata.bug_kind
+        }
+    except (DatasetNotFoundError, FileNotFoundError, ValueError):
+        # Labels are a nicety; clusters are still useful without them.
+        console.print("[dim]dataset not found — clustering without bug-kind labels[/dim]")
+
+    clusters = cluster_failures(run, bug_kinds=bug_kinds or None)
+    if not clusters:
+        console.print("[green]no failures to cluster[/green]")
+        return
+
+    table = Table(title="failure clusters", title_justify="left")
+    table.add_column("cluster", overflow="fold")
+    table.add_column("cases", justify="right")
+    table.add_column("dominant fault", overflow="fold")
+    table.add_column("purity", justify="right")
+    for cluster in clusters:
+        table.add_row(
+            cluster.label,
+            str(cluster.size),
+            cluster.dominant_bug_kind,
+            f"{cluster.purity:.0%}" if cluster.bug_kinds else "—",
+        )
+    console.print(table)
+    if bug_kinds:
+        console.print(f"[dim]overall purity: {overall_purity(clusters):.0%}[/dim]")
+
+
+@app.command("select")
+def select_command(
+    budget: Annotated[float, typer.Option("--budget", min=0.0, help="Cost budget, in tokens.")],
+    database: Annotated[Path, typer.Option("--db", help="Results database.")] = DEFAULT_DATABASE,
+    limit: Annotated[
+        int, typer.Option("--from-runs", min=1, help="How many recent runs to learn from.")
+    ] = 20,
+) -> None:
+    """Pick the most informative cases that fit a budget.
+
+    A case every version passes and one every version fails both cost full price
+    and carry no information; this ranks by outcome variance per unit cost.
+    """
+    with Store.open(database) as store:
+        runs = [store.load_run(summary.run_id) for summary in store.list_runs(limit=limit)]
+
+    if not runs:
+        raise _fail("no runs to learn from yet")
+
+    selection = select_from_runs(runs, budget=budget)
+    console.print(
+        f"selected [bold]{len(selection.case_ids)}[/bold] of {selection.considered} cases "
+        f"— cost {selection.total_cost:,.0f} of {selection.budget:,.0f}, "
+        f"information {selection.total_discrimination:.2f}"
+    )
+    for case_id in selection.case_ids:
+        console.print(f"  {case_id}")
 
 
 @app.command("serve")

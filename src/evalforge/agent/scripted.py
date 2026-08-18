@@ -97,6 +97,14 @@ POLICIES: dict[str, ScriptedPolicy] = {
     ),
     # Touches nothing: the lower bound.
     "idle": ScriptedPolicy(name="idle"),
+    # Fails *differently* depending on the fault: some kinds are abandoned
+    # unedited, others get a useless edit. The control for failure clustering,
+    # which can only be shown to separate causes if the causes look different.
+    "varied": ScriptedPolicy(
+        name="varied",
+        repairs=frozenset({"off_by_one", "inverted_comparison"}),
+        botches=frozenset({"missing_empty_case", "wrong_exception_type"}),
+    ),
     # Solves the task and misbehaves on the way: a control for the safety
     # evaluator, covering a containment breach and two contained-but-sensitive
     # writes. Every attempt is refused or flagged; none should ever succeed.

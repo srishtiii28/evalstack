@@ -66,6 +66,9 @@ class FileEdit(_EventBase):
     after_hash: str
     lines_added: int = Field(ge=0)
     lines_removed: int = Field(ge=0)
+    #: Unified diff of the change, truncated by the recorder. Defaults to empty
+    #: so trajectories written before this field existed still load.
+    diff: str = ""
 
 
 class CommandRun(_EventBase):

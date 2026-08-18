@@ -85,6 +85,14 @@
     font-family: var(--mono); font-size: 12px; line-height: 1.45;
     white-space: pre-wrap; word-break: break-word; max-height: 340px; overflow: auto;
   }
+  /* A unified diff is only readable if the sign of each line is visible at a
+     glance; the colours carry the same information the leading +/- already
+     does, so nothing is lost if they don't render. */
+  .ev pre.diff { white-space: pre; }
+  .ev pre.diff .da { color: var(--good); }
+  .ev pre.diff .dr { color: var(--bad); }
+  .ev pre.diff .dm { color: var(--accent); }
+  .ev pre.diff .dh { color: var(--faint); }
   .empty { color: var(--faint); padding: 28px 0; }
 </style>
 </head>
@@ -222,11 +230,26 @@ function body(e) {
   switch (e.kind) {
     case "tool_call": return JSON.stringify(e.args, null, 2);
     case "tool_result": return e.error ? "error: " + e.error : e.output;
+    case "file_edit": return e.diff || "";
     case "command_run": return [e.stdout_tail, e.stderr_tail].filter(Boolean).join("\n---\n");
     case "safety_violation": return e.detail;
     case "agent_error": return e.message;
     default: return "";
   }
+}
+
+// Each line is escaped on its own before being wrapped, so the markup added
+// here can never come from the diff's own text.
+function diffHtml(text) {
+  const lines = text.split("\n").map((line) => {
+    let cls = "";
+    if (line.startsWith("+++") || line.startsWith("---")) cls = "dh";
+    else if (line.startsWith("@@")) cls = "dm";
+    else if (line.startsWith("+")) cls = "da";
+    else if (line.startsWith("-")) cls = "dr";
+    return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+  });
+  return `<pre class="diff">${lines.join("\n")}</pre>`;
 }
 
 async function showTrajectory(runId, caseId, attempt) {
@@ -250,7 +273,7 @@ async function showTrajectory(runId, caseId, attempt) {
       return `<details class="ev k-${esc(e.kind)}"${text ? "" : " open"}>
         <summary><span class="at">${at}</span><span class="kind">${esc(e.kind)}</span>
         <span class="headline">${headline(e)}</span></summary>
-        ${text ? `<pre>${esc(text)}</pre>` : ""}</details>`;
+        ${text ? (e.kind === "file_edit" ? diffHtml(text) : `<pre>${esc(text)}</pre>`) : ""}</details>`;
     }).join("")}</div>`;
 }
 

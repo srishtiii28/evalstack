@@ -47,6 +47,32 @@ def test_write_then_read_roundtrip(workspace: Workspace) -> None:
     assert (record.lines_added, record.lines_removed) == (1, 1)
 
 
+def test_an_edit_records_a_unified_diff_of_what_changed(workspace: Workspace) -> None:
+    """Hashes prove that something changed; only the diff shows what.
+
+    Captured at write time because that is the one moment both versions of the
+    file exist — reconstructing it later would mean keeping every revision.
+    """
+    record = workspace.write_file("pkg/calc.py", "def add(a, b):\n    return a - b\n")
+
+    assert "--- a/pkg/calc.py" in record.diff
+    assert "+++ b/pkg/calc.py" in record.diff
+    assert "-    return a + b" in record.diff
+    assert "+    return a - b" in record.diff
+
+
+def test_rewriting_a_file_with_identical_contents_produces_an_empty_diff(
+    workspace: Workspace,
+) -> None:
+    """No change means no diff, so the viewer shows nothing rather than a header."""
+    unchanged = workspace.read_file("pkg/calc.py")
+
+    record = workspace.write_file("pkg/calc.py", unchanged)
+
+    assert record.unchanged is True
+    assert record.diff == ""
+
+
 def test_writing_a_new_file_reports_creation(workspace: Workspace) -> None:
     record = workspace.write_file("pkg/new.py", "x = 1\n")
 

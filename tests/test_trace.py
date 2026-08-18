@@ -120,6 +120,39 @@ def test_long_output_is_truncated_in_the_middle() -> None:
     assert output.endswith("TAIL")
 
 
+def test_a_large_diff_is_bounded_like_any_other_agent_controlled_text() -> None:
+    """An agent that rewrites a huge file must not be able to bloat the trace.
+
+    The diff is as agent-controlled as tool output is, so it goes through the
+    same limit rather than being trusted for being structured.
+    """
+    recorder = make_recorder(max_output_chars=100)
+
+    recorder.file_edit(
+        path="big.py",
+        before_hash="sha256:1",
+        after_hash="sha256:2",
+        lines_added=900,
+        lines_removed=0,
+        diff="\n".join(f"+line {i}" for i in range(900)),
+    )
+
+    diff = recorder.build().of_type(FileEdit)[0].diff
+    assert len(diff) <= 100
+    assert "characters omitted" in diff
+
+
+def test_an_edit_recorded_without_a_diff_stays_empty() -> None:
+    """Trajectories written before the field existed must still load."""
+    recorder = make_recorder()
+
+    recorder.file_edit(
+        path="a.py", before_hash=None, after_hash="sha256:2", lines_added=1, lines_removed=0
+    )
+
+    assert recorder.build().of_type(FileEdit)[0].diff == ""
+
+
 def test_truncate_keeps_both_ends() -> None:
     result = truncate("HEAD" + "x" * 1000 + "TAIL", 50)
 

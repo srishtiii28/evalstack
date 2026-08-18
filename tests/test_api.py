@@ -340,3 +340,33 @@ def test_the_viewer_handles_every_event_kind_the_schema_can_emit() -> None:
     assert emitted, "no event kinds discovered — the introspection is wrong, not the page"
     missing = emitted - handled
     assert not missing, f"the trajectory viewer has no case for: {sorted(missing)}"
+
+
+def test_the_viewer_expands_a_file_edit_into_its_diff() -> None:
+    """A file_edit whose body is empty renders as a headline with nothing under it.
+
+    That is what it did before the diff was recorded, and it made the one event
+    you most want to inspect the only one you could not open.
+    """
+    page = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+
+    start = page.index("function body(e)")
+    body = page[start : page.index("async function showTrajectory")]
+
+    assert 'case "file_edit"' in body, "file_edit has no expandable body"
+
+
+def test_the_diff_renderer_escapes_each_line_it_wraps() -> None:
+    """The colouring adds markup around agent-authored text.
+
+    A diff contains whatever the agent wrote, so if the wrapper interpolated a
+    raw line it would be an injection point on a page that renders untrusted
+    file contents.
+    """
+    page = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+
+    start = page.index("function diffHtml(text)")
+    renderer = page[start : page.index("async function showTrajectory")]
+
+    assert "${line}" not in renderer, "a raw diff line is interpolated without escaping"
+    assert "esc(line)" in renderer

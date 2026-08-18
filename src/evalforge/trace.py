@@ -197,6 +197,7 @@ class TrajectoryRecorder:
         after_hash: str,
         lines_added: int,
         lines_removed: int,
+        diff: str = "",
     ) -> None:
         seq, t_ms = self._next_seq()
         self._events.append(
@@ -208,6 +209,9 @@ class TrajectoryRecorder:
                 after_hash=after_hash,
                 lines_added=lines_added,
                 lines_removed=lines_removed,
+                # Bounded like any other agent-controlled text: an agent that
+                # rewrites a large file must not be able to bloat the trace.
+                diff=self._cut(diff),
             )
         )
 

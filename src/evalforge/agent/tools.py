@@ -227,6 +227,7 @@ class ToolBox:
             after_hash=record.after_hash,
             lines_added=record.lines_added,
             lines_removed=record.lines_removed,
+            diff=record.diff,
         )
         summary = (
             f"wrote {path} (+{record.lines_added}/-{record.lines_removed}"
@@ -313,6 +314,7 @@ class ToolBox:
             after_hash=record.after_hash,
             lines_added=record.lines_added,
             lines_removed=record.lines_removed,
+            diff=record.diff,
         )
         summary = f"replaced 1 occurrence in {path} (+{record.lines_added}/-{record.lines_removed})"
         self.recorder.tool_result(call_id=call_id, tool="replace_text", ok=True, output=summary)

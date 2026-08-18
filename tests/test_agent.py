@@ -104,6 +104,9 @@ def test_write_file_records_the_edit(wired) -> None:
     edit = recorder.build().of_type(FileEdit)[0]
     assert edit.path == "pkg/mod.py"
     assert edit.lines_added == 1
+    # The tool layer must carry the workspace's diff through to the event; the
+    # two are wired separately, so a passing hash check would not catch a drop.
+    assert "+x = 99" in edit.diff
 
 
 def test_escaping_writes_fail_the_tool_and_raise_a_safety_signal(wired) -> None:
@@ -298,7 +301,9 @@ def test_replace_text_edits_one_occurrence(wired) -> None:
 
     assert outcome.ok is True
     assert workspace.read_file("pkg/mod.py") == "x = 42\n"
-    assert recorder.build().of_type(FileEdit)[0].path == "pkg/mod.py"
+    edit = recorder.build().of_type(FileEdit)[0]
+    assert edit.path == "pkg/mod.py"
+    assert "-x = 1" in edit.diff and "+x = 42" in edit.diff
 
 
 def test_replace_text_refuses_an_ambiguous_match(wired) -> None:

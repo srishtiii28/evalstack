@@ -89,6 +89,10 @@ class FileEditRecord:
     after_hash: str
     lines_added: int
     lines_removed: int
+    #: Unified diff of the change. Hashes prove *that* something changed; only
+    #: this shows *what*, and it is captured here because this is the one moment
+    #: both versions of the file exist.
+    diff: str = ""
 
     @property
     def created(self) -> bool:
@@ -112,6 +116,23 @@ class FileDiff:
     @property
     def is_empty(self) -> bool:
         return not self.touched
+
+
+def _unified_diff(before: str, after: str, path: str) -> str:
+    """Render a change as a unified diff, for a human reading the trajectory.
+
+    Kept separate from :func:`_count_line_changes` rather than sharing one
+    difflib pass: the counts are computed with no context lines, and quietly
+    changing that to suit a display concern would move a number other people's
+    thresholds are set against.
+    """
+    lines = difflib.unified_diff(
+        before.splitlines(keepends=True),
+        after.splitlines(keepends=True),
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+    )
+    return "".join(lines)
 
 
 def _count_line_changes(before: str, after: str) -> tuple[int, int]:
@@ -220,6 +241,7 @@ class Workspace:
             after_hash=text_hash(contents),
             lines_added=added,
             lines_removed=removed,
+            diff=_unified_diff(before or "", contents, relative),
         )
 
     def delete_file(self, relative: str) -> bool:
